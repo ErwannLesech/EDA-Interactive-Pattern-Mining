@@ -1,0 +1,11 @@
+transaction_id,items
+1,"bread,milk,eggs"
+2,"bread,butter"
+3,"milk,butter,cheese"
+4,"bread,milk,butter"
+5,"bread,eggs"
+6,"milk,cheese,yogurt"
+7,"bread,milk,eggs,butter"
+8,"cheese,yogurt"
+9,"bread,butter,eggs"
+10,"milk,bread,cheese,yogurt"

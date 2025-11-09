@@ -1,0 +1,6 @@
+Transaction_ID,pain,lait,beurre,fromage,œufs
+T1,1,1,1,0,0
+T2,1,0,1,0,0
+T3,0,1,0,1,1
+T4,1,0,0,1,0
+T5,0,1,1,0,0
