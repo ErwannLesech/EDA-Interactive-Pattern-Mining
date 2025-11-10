@@ -2,6 +2,7 @@ import pandas as pd
 from typing import List, Tuple, Optional
 from io import BytesIO
 import logging
+from mlxtend.preprocessing import TransactionEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -194,3 +195,12 @@ def create_sample_dataset(n_transactions: int = 100) -> pd.DataFrame:
         })
     
     return pd.DataFrame(transactions)
+
+def binarise_transactions(transactions: List[List[str]]) -> pd.DataFrame:
+    """Convertit une liste de transactions en format binaire (DataFrame)"""
+
+    encoder = TransactionEncoder()
+    binary_array = encoder.fit(transactions).transform(transactions, sparse=False)
+    df_binary = pd.DataFrame(binary_array, columns=encoder.columns_)
+    
+    return df_binary
