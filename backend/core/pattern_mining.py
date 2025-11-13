@@ -24,6 +24,11 @@ class PatternMiner:
         self.rules = association_rules(self.frequent_itemsets, metric="confidence", min_threshold=min_confidence)
         self.frequent_itemsets['length'] = self.frequent_itemsets['itemsets'].apply(lambda x: len(x))
         self.frequent_itemsets['coverage'] = self.frequent_itemsets['support'] * len(self.transactions)
-        self.rules.drop(columns=['leverage', 'conviction','zhangs_metric', 'jaccard', 'certainty', 'kulczynski','representativity'], inplace=True)
+        
+        # Supprimer les colonnes inutiles (seulement celles qui existent)
+        columns_to_drop = ['leverage', 'conviction', 'zhangs_metric', 'jaccard', 'certainty', 'kulczynski', 'representativity']
+        existing_columns_to_drop = [col for col in columns_to_drop if col in self.rules.columns]
+        if existing_columns_to_drop:
+            self.rules.drop(columns=existing_columns_to_drop, inplace=True)
 
         return self.frequent_itemsets, self.rules

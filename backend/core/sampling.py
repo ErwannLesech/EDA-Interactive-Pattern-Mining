@@ -1,7 +1,11 @@
 import numpy as np
 import pandas as pd
-from typing import List, Tuple, FrozenSet
+from typing import List, Tuple, FrozenSet, Dict
 import random
+import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 class PatternSampler:
     """Classe pour l'échantillonnage et l'analyse de motifs"""
@@ -10,6 +14,9 @@ class PatternSampler:
         self.patterns = patterns
         random.seed(42)
         np.random.seed(42)
+        
+        # Historique de feedback pour la partie 4 (Évaluation)
+        self.feedback_history: List[Dict] = []
 
     def calculate_surprise(self, itemset: frozenset, observed_support: float) -> float:
         if not itemset:
@@ -111,7 +118,82 @@ class PatternSampler:
         return result
     
     def user_feedback(self, index : int, alpha: float, beta: float, rating: int):
-        if rating==1:
-            self.patterns.iloc[index]['composite_score']+=np.exp(-alpha)
-        else:
-            self.patterns.iloc[index]['composite_score']-=np.exp(-beta)
+        """
+        Applique un feedback utilisateur pour ajuster le score composite.
+        
+        Args:
+            index: Index du motif dans le DataFrame
+            alpha: Paramètre pour le boost (like)
+            beta: Paramètre pour la pénalité (dislike)
+            rating: 1 pour like, -1 pour dislike, 0 pour neutre
+        """
+        # Enregistrer le feedback dans l'historique
+        self.feedback_history.append({
+            "pattern_index": index,
+            "rating": rating,
+            "timestamp": time.time(),
+            "alpha": alpha,
+            "beta": beta
+        })
+        
+        # Ajuster le score composite
+        if 'composite_score' not in self.patterns.columns:
+            logger.warning("Composite score non calculé, initialisation avec 0.5")
+            self.patterns['composite_score'] = 0.5
+        
+        if rating == 1:
+            # Boost pour un like
+            self.patterns.loc[index, 'composite_score'] += np.exp(-alpha)
+        elif rating == -1:
+            # Pénalité pour un dislike
+            self.patterns.loc[index, 'composite_score'] -= np.exp(-beta)
+        
+        # Normaliser les scores pour maintenir une distribution de probabilité
+        total_score = self.patterns['composite_score'].sum()
+        if total_score > 0:
+            self.patterns['composite_score'] = self.patterns['composite_score'] / total_score
+        
+        logger.info(f"Feedback appliqué: index={index}, rating={rating}, nouveau_score={self.patterns.loc[index, 'composite_score']:.4f}")
+    
+    def get_feedback_stats(self) -> Dict:
+        """
+        Calcule des statistiques sur les feedbacks reçus.
+        
+        Returns:
+            Dictionnaire avec statistiques de feedback
+        """
+        if not self.feedback_history:
+            return {
+                "total_feedbacks": 0,
+                "likes": 0,
+                "dislikes": 0,
+                "neutral": 0,
+                "acceptance_rate": 0.0
+            }
+        
+        likes = sum(1 for fb in self.feedback_history if fb['rating'] == 1)
+        dislikes = sum(1 for fb in self.feedback_history if fb['rating'] == -1)
+        neutral = sum(1 for fb in self.feedback_history if fb['rating'] == 0)
+        total = len(self.feedback_history)
+        
+        acceptance_rate = (likes / total * 100) if total > 0 else 0.0
+        
+        return {
+            "total_feedbacks": total,
+            "likes": likes,
+            "dislikes": dislikes,
+            "neutral": neutral,
+            "acceptance_rate": round(acceptance_rate, 2)
+        }
+    
+    def export_feedback_history(self) -> pd.DataFrame:
+        """
+        Exporte l'historique des feedbacks sous forme de DataFrame.
+        
+        Returns:
+            DataFrame avec l'historique complet
+        """
+        if not self.feedback_history:
+            return pd.DataFrame()
+        
+        return pd.DataFrame(self.feedback_history)

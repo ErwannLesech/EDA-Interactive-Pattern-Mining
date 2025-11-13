@@ -112,3 +112,51 @@ class DatasetStorage:
             logger.info(f"{deleted_count} dataset(s) nettoyé(s)")
         
         return deleted_count
+    
+    @staticmethod
+    def save_feedback(feedback_data: dict) -> str:
+        """Sauvegarde un feedback utilisateur."""
+        feedback_id = str(uuid.uuid4())
+        feedback_file = STORAGE_DIR / "feedbacks.json"
+        
+        try:
+            # Charger les feedbacks existants
+            if feedback_file.exists():
+                import json
+                with open(feedback_file, 'r') as f:
+                    feedbacks = json.load(f)
+            else:
+                feedbacks = []
+            
+            # Ajouter le nouveau feedback
+            feedback_data['feedback_id'] = feedback_id
+            feedback_data['timestamp'] = time.time()
+            feedbacks.append(feedback_data)
+            
+            # Sauvegarder
+            import json
+            with open(feedback_file, 'w') as f:
+                json.dump(feedbacks, f, indent=2)
+            
+            logger.info(f"Feedback sauvegardé: {feedback_id}")
+            return feedback_id
+            
+        except Exception as e:
+            logger.error(f"Erreur sauvegarde feedback: {str(e)}")
+            raise
+    
+    @staticmethod
+    def get_all_feedbacks() -> List[Dict]:
+        """Récupère tous les feedbacks."""
+        feedback_file = STORAGE_DIR / "feedbacks.json"
+        
+        if not feedback_file.exists():
+            return []
+        
+        try:
+            import json
+            with open(feedback_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Erreur chargement feedbacks: {str(e)}")
+            return []
