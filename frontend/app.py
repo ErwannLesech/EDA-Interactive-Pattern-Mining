@@ -1,11 +1,15 @@
 import streamlit as st
 import requests
 import pandas as pd
+import logging
 from components.upload import upload_component
 from components.visualizations import visualize_patterns
 from components.feedback import feedback_component
 from components.dataset_selector import dataset_selector_component, get_active_dataset_info
 from components.evaluation import evaluation_component
+
+# Logger
+logger = logging.getLogger(__name__)
 
 # Configuration de la page
 st.set_page_config(
@@ -78,7 +82,7 @@ with tab2:
     else:
         st.success(f"✅ Dataset actif: `{st.session_state['active_dataset_id'][:8]}...`")
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("🚀 Lancer l'extraction", type="primary"):
                 with st.spinner("Extraction en cours..."):
@@ -108,6 +112,36 @@ with tab2:
                         st.error(f"❌ Erreur lors de l'extraction: {str(e)}")
         
         with col2:
+            if st.button("🔄 Ré-échantillonner", help="Applique un nouvel échantillonnage basé sur vos feedbacks"):
+                with st.spinner("Ré-échantillonnage en cours..."):
+                    try:
+                        response = requests.post(
+                            f"{BACKEND_URL}/api/sample",
+                            json={
+                                "dataset_id": st.session_state['active_dataset_id'],
+                                "k": k_samples,
+                                "replacement": strategy == "avec",
+                                "support_weight": 0.4,
+                                "surprise_weight": 0.4,
+                                "redundancy_weight": 0.2
+                            },
+                            timeout=30
+                        )
+                        
+                        if response.status_code == 200:
+                            sampling_results = response.json()
+                            # Mettre à jour l'aperçu avec les motifs échantillonnés
+                            if st.session_state.get('mining_results'):
+                                st.session_state['mining_results']['patterns_preview'] = sampling_results['sampled_patterns']
+                            st.success(f"✅ {sampling_results['message']}")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Erreur: {response.status_code}")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Erreur: {str(e)}")
+        
+        with col3:
             if st.session_state.get('mining_results'):
                 results = st.session_state['mining_results']
                 st.metric("Temps d'extraction", f"{results['computation_time']:.2f}s")
@@ -136,10 +170,35 @@ with tab2:
                 st.subheader("Top 10 Motifs Fréquents")
                 
                 if results['patterns_preview']:
+                    # Afficher les statistiques de feedback
+                    try:
+                        stats_response = requests.get(
+                            f"{BACKEND_URL}/api/feedback/stats/{st.session_state['active_dataset_id']}"
+                        )
+                        if stats_response.status_code == 200:
+                            feedback_stats = stats_response.json()['stats']
+                            
+                            # Afficher les stats en haut
+                            st.markdown("### 📊 Statistiques de Feedback")
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("👍 Likes", feedback_stats['likes'])
+                            with col2:
+                                st.metric("👎 Dislikes", feedback_stats['dislikes'])
+                            with col3:
+                                st.metric("Total", feedback_stats['total_feedbacks'])
+                            with col4:
+                                st.metric("Taux d'acceptation", f"{feedback_stats['acceptance_rate']}%")
+                            
+                            st.markdown("---")
+                    except Exception as e:
+                        logger.error(f"Erreur récupération stats: {str(e)}")
+                    
                     # Convertir en DataFrame pour affichage
                     patterns_data = []
-                    for p in results['patterns_preview']:
+                    for idx, p in enumerate(results['patterns_preview']):
                         patterns_data.append({
+                            "ID": idx,
                             "Items": ", ".join(p['itemset']),
                             "Support": f"{p['support']:.4f}",
                             "Longueur": p['length'],
@@ -148,6 +207,73 @@ with tab2:
                     
                     df_patterns = pd.DataFrame(patterns_data)
                     st.dataframe(df_patterns, use_container_width=True, hide_index=True)
+                    
+                    # Section de feedback interactif
+                    st.markdown("### 💬 Feedback Interactif")
+                    st.info("👉 Sélectionnez un motif et donnez votre avis pour améliorer les recommandations futures")
+                    
+                    col1, col2, col3 = st.columns([2, 1, 1])
+                    
+                    with col1:
+                        pattern_id = st.selectbox(
+                            "Sélectionner un motif",
+                            options=range(len(results['patterns_preview'])),
+                            format_func=lambda x: f"Motif {x}: {', '.join(results['patterns_preview'][x]['itemset'])}"
+                        )
+                    
+                    with col2:
+                        if st.button("👍 Like", type="primary", use_container_width=True):
+                            try:
+                                feedback_response = requests.post(
+                                    f"{BACKEND_URL}/api/feedback",
+                                    json={
+                                        "dataset_id": st.session_state['active_dataset_id'],
+                                        "pattern_id": pattern_id,
+                                        "rating": 1,
+                                        "comment": "Like"
+                                    }
+                                )
+                                
+                                if feedback_response.status_code == 200:
+                                    result = feedback_response.json()
+                                    if result.get('reweighted'):
+                                        st.success("✅ Merci ! Les motifs ont été ré-pondérés.")
+                                        st.rerun()
+                                    else:
+                                        st.success("✅ Feedback enregistré")
+                                else:
+                                    st.error(f"Erreur: {feedback_response.status_code}")
+                                    
+                            except Exception as e:
+                                st.error(f"Erreur: {str(e)}")
+                    
+                    with col3:
+                        if st.button("👎 Dislike", use_container_width=True):
+                            try:
+                                feedback_response = requests.post(
+                                    f"{BACKEND_URL}/api/feedback",
+                                    json={
+                                        "dataset_id": st.session_state['active_dataset_id'],
+                                        "pattern_id": pattern_id,
+                                        "rating": -1,
+                                        "comment": "Dislike"
+                                    }
+                                )
+                                
+                                if feedback_response.status_code == 200:
+                                    result = feedback_response.json()
+                                    if result.get('reweighted'):
+                                        st.success("✅ Merci ! Les motifs ont été ré-pondérés.")
+                                        st.rerun()
+                                    else:
+                                        st.success("✅ Feedback enregistré")
+                                else:
+                                    st.error(f"Erreur: {feedback_response.status_code}")
+                                    
+                            except Exception as e:
+                                st.error(f"Erreur: {str(e)}")
+                    
+                    st.markdown("---")
                     
                     # Bouton pour voir tous les motifs
                     if st.button("📥 Voir tous les motifs"):

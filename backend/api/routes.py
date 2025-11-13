@@ -8,9 +8,11 @@ from api.models import (
     MiningRequest,
     MiningResponse,
     PatternItem,
-    RuleItem
+    RuleItem,
+    SamplingRequest,
+    SamplingResponse
 )
-from typing import List, Optional
+from typing import List, Optional, Dict
 import pandas as pd
 from io import BytesIO
 import logging
@@ -25,6 +27,7 @@ from utils.data_processing import (
 from utils.storage import DatasetStorage, STORAGE_DIR
 from core.evaluation import PatternEvaluator
 from core.pattern_mining import PatternMiner
+from core.sampling import PatternSampler
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -32,6 +35,9 @@ handler = logging.StreamHandler()
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
+
+# Stockage global des samplers par dataset_id pour la boucle interactive
+active_samplers: Dict[str, PatternSampler] = {}
 
 router = APIRouter()
 
@@ -354,21 +360,99 @@ async def evaluate_coverage(dataset_id: str = Body(...)):
 async def submit_feedback(feedback: FeedbackData):
     """
     Soumet un feedback utilisateur pour un motif.
-    Le feedback est stocké pour calculer le taux d'acceptation.
+    Le feedback est stocké et appliqué au sampler pour ré-pondérer les motifs.
+    Cela crée une boucle interactive où les likes/dislikes influencent les échantillonnages futurs.
+    
+    Args:
+        feedback: Données du feedback (dataset_id, pattern_id, rating, comment)
     """
     try:
-        # Stocker le feedback (peut être étendu avec une vraie base de données)
-        feedback_id = DatasetStorage.save_feedback(feedback.dict())
+        # Stocker le feedback
+        feedback_dict = feedback.dict()
+        feedback_id = DatasetStorage.save_feedback(feedback_dict)
         
-        return {
-            "message": "Feedback enregistré avec succès",
-            "feedback_id": feedback_id,
-            "pattern_id": feedback.pattern_id,
-            "rating": feedback.rating
-        }
+        # Appliquer le feedback au sampler s'il existe
+        if feedback.dataset_id in active_samplers:
+            sampler = active_samplers[feedback.dataset_id]
+            # Paramètres pour le boost/pénalité (ajustables)
+            alpha = 0.1  # Paramètre pour le boost (like)
+            beta = 0.15  # Paramètre pour la pénalité (dislike)
+            
+            sampler.user_feedback(
+                index=feedback.pattern_id,
+                alpha=alpha,
+                beta=beta,
+                rating=feedback.rating
+            )
+            
+            logger.info(f"Feedback appliqué au sampler: dataset={feedback.dataset_id}, pattern={feedback.pattern_id}, rating={feedback.rating}")
+            
+            # Récupérer les stats mises à jour
+            stats = sampler.get_feedback_stats()
+            
+            return {
+                "message": "Feedback enregistré et appliqué avec succès",
+                "feedback_id": feedback_id,
+                "pattern_id": feedback.pattern_id,
+                "rating": feedback.rating,
+                "reweighted": True,
+                "stats": stats
+            }
+        else:
+            logger.warning(f"Aucun sampler actif pour dataset {feedback.dataset_id}")
+            return {
+                "message": "Feedback enregistré (sampler non actif)",
+                "feedback_id": feedback_id,
+                "pattern_id": feedback.pattern_id,
+                "rating": feedback.rating,
+                "reweighted": False
+            }
         
     except Exception as e:
         logger.error(f"Erreur lors de l'enregistrement du feedback : {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur : {str(e)}"
+        )
+
+
+@router.get("/feedback/stats/{dataset_id}")
+async def get_feedback_stats(dataset_id: str):
+    """
+    Récupère les statistiques de feedback pour un dataset.
+    
+    Args:
+        dataset_id: ID du dataset
+        
+    Returns:
+        Statistiques de feedback (total, likes, dislikes, taux d'acceptation)
+    """
+    try:
+        if dataset_id in active_samplers:
+            sampler = active_samplers[dataset_id]
+            stats = sampler.get_feedback_stats()
+            
+            return {
+                "dataset_id": dataset_id,
+                "stats": stats,
+                "sampler_active": True
+            }
+        else:
+            # Retourner des stats vides si pas de sampler actif
+            return {
+                "dataset_id": dataset_id,
+                "stats": {
+                    "total_feedbacks": 0,
+                    "likes": 0,
+                    "dislikes": 0,
+                    "neutral": 0,
+                    "acceptance_rate": 0.0
+                },
+                "sampler_active": False
+            }
+            
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des stats : {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Erreur : {str(e)}"
@@ -434,6 +518,17 @@ async def mine_patterns(request: MiningRequest):
         rules_filepath = STORAGE_DIR / f"{rules_id}.csv"
         rules.to_csv(rules_filepath, index=False)
         logger.info(f"Règles sauvegardées: {rules_id}")
+        
+        # Créer le sampler pour la boucle interactive de feedback
+        sampler = PatternSampler(patterns)
+        # Calculer les scores composites initiaux
+        sampler.composite_scoring(
+            support_weight=0.4,
+            surprise_weight=0.4,
+            redundancy_weight=0.2
+        )
+        active_samplers[request.dataset_id] = sampler
+        logger.info(f"Sampler créé et activé pour dataset {request.dataset_id}")
         
         # Préparer la preview des motifs (top 10)
         patterns_preview = []
@@ -528,10 +623,78 @@ async def get_patterns(dataset_id: str, limit: Optional[int] = 100):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Erreur lors de la récupération des motifs : {str(e)}")
+        logger.error(f"Erreur lors de la récupération des règles : {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Erreur : {str(e)}"
+        )
+
+
+@router.post("/sample", response_model=SamplingResponse)
+async def sample_patterns(request: SamplingRequest):
+    """
+    Effectue un échantillonnage pondéré des motifs basé sur les scores composites.
+    Les feedbacks précédents influencent les scores, créant une boucle interactive.
+    
+    Args:
+        request: SamplingRequest avec dataset_id, k (nombre), replacement (avec/sans remise), poids
+        
+    Returns:
+        SamplingResponse avec les motifs échantillonnés
+    """
+    try:
+        # Vérifier si un sampler existe pour ce dataset
+        if request.dataset_id not in active_samplers:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Aucun sampler actif pour le dataset {request.dataset_id}. Veuillez d'abord extraire les motifs."
+            )
+        
+        sampler = active_samplers[request.dataset_id]
+        
+        # Recalculer les scores composites avec les nouveaux poids
+        sampler.composite_scoring(
+            support_weight=request.support_weight,
+            surprise_weight=request.surprise_weight,
+            redundancy_weight=request.redundancy_weight
+        )
+        
+        # Effectuer l'échantillonnage pondéré
+        sampled_indices = sampler.importance_sampling(
+            support_weight=request.support_weight,
+            surprise_weight=request.surprise_weight,
+            redundancy_weight=request.redundancy_weight,
+            k=request.k,
+            replacement=request.replacement
+        )
+        
+        # Préparer la liste des motifs échantillonnés
+        sampled_patterns = []
+        for idx, itemset in sampled_indices:
+            pattern_row = sampler.patterns.iloc[idx]
+            sampled_patterns.append(PatternItem(
+                itemset=list(pattern_row['itemsets']),
+                support=float(pattern_row['support']),
+                length=int(pattern_row['length']),
+                coverage=float(pattern_row['coverage'])
+            ))
+        
+        logger.info(f"Échantillonnage effectué: {len(sampled_patterns)} motifs pour dataset {request.dataset_id}")
+        
+        return SamplingResponse(
+            dataset_id=request.dataset_id,
+            num_sampled=len(sampled_patterns),
+            sampled_patterns=sampled_patterns,
+            message=f"Échantillonnage réussi : {len(sampled_patterns)} motifs sélectionnés"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur lors de l'échantillonnage : {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de l'échantillonnage : {str(e)}"
         )
 
 

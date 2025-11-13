@@ -44,6 +44,7 @@ class Feedback(BaseModel):
 
 class FeedbackData(BaseModel):
     """Modèle pour soumettre un feedback utilisateur"""
+    dataset_id: str
     pattern_id: int
     rating: int  # 1 pour like, -1 pour dislike, 0 pour neutre
     comment: Optional[str] = None
@@ -165,3 +166,22 @@ class MiningResponse(BaseModel):
     rules_preview: List[RuleItem]
     computation_time: float
     message: str
+
+
+class SamplingRequest(BaseModel):
+    """Requête pour l'échantillonnage interactif"""
+    dataset_id: str
+    k: int = 50  # Nombre de motifs à échantillonner
+    replacement: bool = False  # Avec ou sans remise
+    support_weight: float = 0.4
+    surprise_weight: float = 0.4
+    redundancy_weight: float = 0.2
+
+
+class SamplingResponse(BaseModel):
+    """Réponse de l'échantillonnage"""
+    dataset_id: str
+    num_sampled: int
+    sampled_patterns: List[PatternItem]
+    message: str
+

@@ -24,7 +24,7 @@ class PatternSampler:
 
         expected_support = 1.0
         for item in itemset:
-            item_row = self.patterns[self.patterns["itemset"].apply(lambda x: len(x) == 1 and item in x)]
+            item_row = self.patterns[self.patterns["itemsets"].apply(lambda x: len(x) == 1 and item in x)]
             if not item_row.empty:
                 expected_support *= float(item_row["support"].iloc[0])
             else:
@@ -75,10 +75,10 @@ class PatternSampler:
         surprise_scores: List[float] = []
         redundancy_scores: List[float] = []
 
-        all_itemsets = self.patterns["itemset"].tolist()
+        all_itemsets = self.patterns["itemsets"].tolist()
 
         for _, row in self.patterns.iterrows():
-            itemset = row["itemset"]
+            itemset = row["itemsets"]
             observed_support = float(row["support"])
 
             surprise = self.calculate_surprise(itemset, observed_support)
