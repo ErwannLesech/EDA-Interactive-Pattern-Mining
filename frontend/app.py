@@ -25,9 +25,11 @@ with st.sidebar:
     
     # Paramètres de mining
     st.subheader("Extraction")
-    min_support = st.slider("Minimum", 0.01, 0.5, 0.05)
-    min_confidence = st.slider("Maximum", 0.1, 1.0, 0.5)
-    max_length = st.slider("Autres paramètres", 2, 10, 5)
+    min_support = st.slider("Minimum support", 0.01, 0.5, 0.05)
+    support_weight = st.slider("Poids du support", min_value=0.0, max_value=1.0, value=0.5, step=0.01)
+    surprise_weight = st.slider("Poids de la surprise", min_value=0.0, max_value=1.0, value=0.3, step=0.01)
+    redundancy_weight = st.slider("Poids de la redondance", min_value=0.0, max_value=1.0, value=0.2, step=0.01)
+    st.write(f"La somme des poids est : {support_weight + surprise_weight + redundancy_weight:.2f}")
     
     st.markdown("---")
     
@@ -55,16 +57,58 @@ with tab2:
     else:
         dataset_name = st.session_state.get('active_dataset_name', 'Dataset')
         st.success(f"✅ Dataset actif: **{dataset_name}**")
-        
+        motifs_df = pd.DataFrame()
+        sampled_df = pd.DataFrame()
         if st.button("🚀 Lancer l'extraction", type="primary"):
-            with st.spinner("Extraction en cours..."):
-                # TODO: Appel API avec dataset_id
-                st.success("✅ Extraction en cours de développement!")
-        
-        # Emplacement pour feedback
-        # feedback_component()
-        st.info("Les motifs extraits apparaîtront ici après l'extraction")
-        st.info("Le composant de feedback sera intégré avec les motifs extraits")
+            if support_weight + surprise_weight + redundancy_weight != 1:
+                st.error(f"❌ La somme des poids doit être égale à 1. Elle est égale à {support_weight + surprise_weight + redundancy_weight:.2f}. Ajustez les curseurs.")
+            else:
+                with st.spinner("Extraction en cours..."):
+                    response = requests.post(
+                    f"{BACKEND_URL}/api/patterns/mine",
+                    data={  # Utilise 'data' pour envoyer les paramètres en Form
+                        "min_support": min_support,
+                    "support_weight": support_weight,
+                    "surprise_weight": surprise_weight,
+                    "redundancy_weight": redundancy_weight,
+                    "k": k_samples,
+                    "replacement": strategy == "avec"
+                },
+                timeout=30
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    motifs_df = pd.DataFrame(result["frequent_itemsets"])
+                    sampled_df = pd.DataFrame(result["sampled_patterns"])
+                    if not motifs_df.empty:
+                        if len(motifs_df) < k_samples:
+                            st.warning(f"⚠️ Seuls {len(motifs_df)} motifs ont été extraits, inférieur au nombre demandé ({k_samples}).")
+                        else:
+                            st.success(result.get("message", "Extraction terminée !"))
+                else:
+                    st.error("❌ Extraction impossible"+ f" (Statut {response.status_code})")
+        if not motifs_df.empty:
+            visualize_patterns(motifs_df)
+        if not sampled_df.empty:
+            st.subheader("Feedback sur les motifs échantillonnés")
+            n_cols = 5
+            rows = [sampled_df.iloc[i:i+n_cols] for i in range(0, len(sampled_df), n_cols)]
+            for row_group in rows:
+                cols = st.columns(len(row_group))
+                for col, (_, row) in zip(cols, row_group.iterrows()):
+                    with col:
+                        # Affiche l'itemset (formaté si besoin)
+                        if isinstance(row['itemset'], (list, set, tuple)):
+                            itemset_str = ", ".join(map(str, row['itemset']))
+                        else:
+                            itemset_str = str(row['itemset'])
+                        st.markdown(f"**{itemset_str}**")
+                        # Boutons de feedback
+                        feedback_component(pattern_id=row.get("id", row.name), backend_url=BACKEND_URL)
+        # # Emplacement pour feedback
+        # # feedback_component()
+        # st.info("Les motifs extraits apparaîtront ici après l'extraction")
+        # st.info("Le composant de feedback sera intégré avec les motifs extraits")
     
 with tab3:
     st.header("Analyse et Visualisations")

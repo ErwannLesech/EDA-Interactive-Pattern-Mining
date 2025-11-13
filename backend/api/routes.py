@@ -7,12 +7,16 @@ from typing import List, Optional
 import pandas as pd
 from io import BytesIO
 import logging
+from core.pattern_mining import PatternMiner
+from core.sampling import PatternSampler
+from fastapi.encoders import jsonable_encoder
 
 from utils.data_processing import (
     read_file_to_dataframe,
     detect_dataset_type,
     normalize_to_transactional_format,
-    detect_separator
+    detect_separator,
+    binarise_transactions
 )
 from utils.storage import DatasetStorage
 
@@ -24,6 +28,9 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 router = APIRouter()
+pattern_miner = PatternMiner(pd.DataFrame())
+pattern_sampler = PatternSampler(pd.DataFrame())
+
 
 @router.post("/detect-separator")
 async def detect_file_separator(file: UploadFile = File(...)):
@@ -155,7 +162,10 @@ async def upload_dataset(
                 status_code=400,
                 detail="Le dataset normalisé est vide. Vérifiez le format des données."
             )
-        
+        # Split the string in 'items' column into lists
+        items_list = df_normalized['items'].apply(lambda x: x.split(',') if isinstance(x, str) else x)
+        pattern_miner.transactions = binarise_transactions(items_list.to_list())
+        pattern_miner.frequent_itemsets, pattern_miner.rules = None,None
         # Utiliser le nom personnalisé ou le nom du fichier
         final_dataset_name = dataset_name if dataset_name else file.filename
         
@@ -262,4 +272,110 @@ async def list_datasets():
         raise HTTPException(
             status_code=500,
             detail=f"Erreur : {str(e)}"
+        )
+
+@router.post("/patterns/mine")
+async def mine_patterns(
+    min_support: float = Form(0.01),
+    support_weight: float = Form(0.4),
+    surprise_weight: float = Form(0.4),
+    redundancy_weight: float = Form(0.2),
+    k: int = Form(50),
+    replacement: bool = Form(True)
+):
+    logger.info(f"Début de l'extraction des motifs avec min_support={min_support}")
+    """Extrait les motifs fréquents et les règles d'association à partir d'un dataset donné"""
+    try: 
+        frequent_itemsets, rules = pattern_miner.mine_patterns(min_support=min_support)
+        
+        pattern_sampler.patterns = frequent_itemsets
+        
+        sampled_pattern=pattern_sampler.importance_sampling(
+            support_weight=support_weight,
+            surprise_weight=surprise_weight,
+            redundancy_weight=redundancy_weight,
+            k=k,
+            replacement=replacement
+        )
+        indexes=[i for _, i in sampled_pattern]
+        return jsonable_encoder({
+            "frequent_itemsets": pattern_sampler.patterns.iloc[indexes].to_dict(orient="records"),
+            "sampled_patterns": [
+                {
+                    "itemset": list(itemset),
+                    "index": int(index)
+                } for itemset, index in sampled_pattern
+            ],
+            "message": f"Extraction réussie: {len(frequent_itemsets)} motifs fréquents extraits, "
+                    f"{len(sampled_pattern)} motifs échantillonnés."
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur lors de l'extraction des motifs : {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de l'extraction des motifs : {str(e)}"
+        )
+@router.post("/patterns/resample")
+async def resample_patterns(
+    support_weight: float = Form(0.4),
+    surprise_weight: float = Form(0.4),
+    redundancy_weight: float = Form(0.2),
+    k: int = Form(50),
+    replacement: bool = Form(True)
+):
+    """Rééchantillonne les motifs fréquents en fonction des poids donnés"""
+    try:
+        sampled_pattern=pattern_sampler.importance_sampling(
+            support_weight=support_weight,
+            surprise_weight=surprise_weight,
+            redundancy_weight=redundancy_weight,
+            k=k,
+            replacement=replacement
+        )
+        indexes=[i for _, i in sampled_pattern]
+        return {
+            "frequent_itemsets": pattern_sampler.patterns.iloc[indexes].to_dict(orient="records"),
+            "sampled_patterns": [
+                {
+                    "itemset": list(itemset),
+                    "index": index
+                } for itemset, index in sampled_pattern
+            ],
+            "message": f"Rééchantillonnage réussi: {len(sampled_pattern)} motifs échantillonnés."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur lors du rééchantillonnage des motifs : {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors du rééchantillonnage des motifs : {str(e)}"
+        )
+    
+@router.post("/feedback")
+async def provide_pattern_feedback(
+    index: int = Form(...),
+    alpha: float = Form(0.5),
+    beta: float = Form(0.3),
+    rating: int = Form(0)
+):
+    """Prend en compte le feedback utilisateur pour ajuster les scores des motifs"""
+    try:
+        pattern_sampler.user_feedback(index, alpha, beta, rating)
+        
+        return {
+            "message": f"Feedback reçu pour le motif index {index} avec rating {rating}."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur lors du traitement du feedback : {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors du traitement du feedback : {str(e)}"
         )

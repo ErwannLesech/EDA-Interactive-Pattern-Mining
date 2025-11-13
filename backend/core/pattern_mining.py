@@ -1,6 +1,12 @@
 import pandas as pd
 from mlxtend.frequent_patterns import apriori, association_rules
-
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 class PatternMiner:
     """Classe pour l'extraction de motifs fréquents"""
     
@@ -21,9 +27,14 @@ class PatternMiner:
         # Générer les itemsets fréquents
         self.frequent_itemsets = apriori(self.transactions, min_support=min_support, use_colnames=True)
         # Générer les règles d'association
-        self.rules = association_rules(self.frequent_itemsets, metric="confidence", min_threshold=min_confidence)
-        self.frequent_itemsets['length'] = self.frequent_itemsets['itemsets'].apply(lambda x: len(x))
-        self.frequent_itemsets['coverage'] = self.frequent_itemsets['support'] * len(self.transactions)
-        self.rules.drop(columns=['leverage', 'conviction','zhangs_metric', 'jaccard', 'certainty', 'kulczynski','representativity'], inplace=True)
-
+        logger.info(f"Nombre de motifs fréquents extraits: {len(self.frequent_itemsets)}")
+        #self.rules = association_rules(self.frequent_itemsets, metric="confidence", min_threshold=min_confidence)
+        #logger.info(f"Nombre de règles d'association générées: {len(self.rules)}")
+        self.frequent_itemsets['longueur'] = self.frequent_itemsets['itemsets'].apply(lambda x: len(x))
+        self.frequent_itemsets['couverture'] = self.frequent_itemsets['support'] * len(self.transactions)
+        self.frequent_itemsets['area'] = self.frequent_itemsets['support'] * self.frequent_itemsets['longueur']
+        cols = ['itemsets', 'support', 'longueur', 'couverture', 'area']
+        self.frequent_itemsets = self.frequent_itemsets[cols]
+        #self.rules.drop(columns=['leverage', 'conviction','zhangs_metric', 'jaccard', 'certainty', 'kulczynski','representativity'], inplace=True)
+        self.rules = pd.DataFrame()  # Placeholder si les règles ne sont pas utilisées
         return self.frequent_itemsets, self.rules
