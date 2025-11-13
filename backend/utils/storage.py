@@ -6,6 +6,7 @@ import os
 import pandas as pd
 import uuid
 import time
+import json
 from pathlib import Path
 from typing import Optional, List, Dict
 import logging
@@ -20,14 +21,26 @@ class DatasetStorage:
     """Gestionnaire de stockage pour les datasets"""
     
     @staticmethod
-    def save_dataset(df: pd.DataFrame, original_filename: str) -> str:
+    def save_dataset(df: pd.DataFrame, dataset_name: str) -> str:
         """Sauvegarde un DataFrame et retourne un identifiant unique."""
         dataset_id = str(uuid.uuid4())
         filepath = STORAGE_DIR / f"{dataset_id}.csv"
+        metadata_path = STORAGE_DIR / f"{dataset_id}.json"
         
         try:
+            # Sauvegarder le dataset
             df.to_csv(filepath, index=False)
-            logger.info(f"Dataset sauvegardé: {dataset_id} ({original_filename})")
+            
+            # Sauvegarder les métadonnées
+            metadata = {
+                "dataset_id": dataset_id,
+                "name": dataset_name,
+                "created_at": time.time()
+            }
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f)
+            
+            logger.info(f"Dataset sauvegardé: {dataset_id} ({dataset_name})")
             return dataset_id
         except Exception as e:
             logger.error(f"Erreur sauvegarde dataset: {str(e)}")
@@ -52,10 +65,14 @@ class DatasetStorage:
     def delete_dataset(dataset_id: str) -> bool:
         """Supprime un dataset du stockage."""
         filepath = STORAGE_DIR / f"{dataset_id}.csv"
+        metadata_path = STORAGE_DIR / f"{dataset_id}.json"
         
         if filepath.exists():
             try:
                 os.remove(filepath)
+                # Supprimer aussi les métadonnées
+                if metadata_path.exists():
+                    os.remove(metadata_path)
                 logger.info(f"Dataset supprimé: {dataset_id}")
                 return True
             except Exception as e:
@@ -75,8 +92,20 @@ class DatasetStorage:
                 stats = filepath.stat()
                 df = pd.read_csv(filepath)
                 
+                # Lire les métadonnées si disponibles
+                metadata_path = STORAGE_DIR / f"{dataset_id}.json"
+                dataset_name = filepath.name
+                if metadata_path.exists():
+                    try:
+                        with open(metadata_path, 'r') as f:
+                            metadata = json.load(f)
+                            dataset_name = metadata.get("name", filepath.name)
+                    except Exception:
+                        pass
+                
                 datasets.append({
                     "dataset_id": dataset_id,
+                    "name": dataset_name,
                     "filename": filepath.name,
                     "rows": len(df),
                     "columns": len(df.columns),
@@ -103,7 +132,12 @@ class DatasetStorage:
             file_age = current_time - filepath.stat().st_mtime
             if file_age > max_age_seconds:
                 try:
+                    dataset_id = filepath.stem
                     os.remove(filepath)
+                    # Supprimer aussi les métadonnées
+                    metadata_path = STORAGE_DIR / f"{dataset_id}.json"
+                    if metadata_path.exists():
+                        os.remove(metadata_path)
                     deleted_count += 1
                 except Exception as e:
                     logger.error(f"Erreur suppression {filepath.name}: {str(e)}")

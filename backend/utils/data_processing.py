@@ -6,13 +6,77 @@ from mlxtend.preprocessing import TransactionEncoder
 
 logger = logging.getLogger(__name__)
 
-def read_file_to_dataframe(file_content: bytes, filename: str) -> pd.DataFrame:
+def detect_separator(file_content: bytes, filename: str) -> str:
+    """
+    Détecte automatiquement le séparateur d'un fichier CSV.
+    
+    Args:
+        file_content: Contenu du fichier en bytes
+        filename: Nom du fichier
+        
+    Returns:
+        Séparateur détecté (str)
+    """
+    # Liste des séparateurs à tester par ordre de priorité
+    separators = [';', '\t', '|', ',', ' ']
+    
+    try:
+        # Lire les premières lignes pour détecter
+        for encoding in ['utf-8', 'latin-1', 'iso-8859-1']:
+            try:
+                sample_lines = file_content.decode(encoding).split('\n')[:10]
+                # Filtrer les lignes vides
+                sample_lines = [line for line in sample_lines if line.strip()]
+                
+                if len(sample_lines) < 2:
+                    continue
+                
+                # Compter les occurrences de chaque séparateur
+                sep_scores = {}
+                for sep in separators:
+                    counts = [line.count(sep) for line in sample_lines]
+                    
+                    # Vérifier que le séparateur apparaît dans toutes les lignes
+                    if not all(c > 0 for c in counts):
+                        continue
+                    
+                    # Vérifier la cohérence : même nombre dans toutes les lignes
+                    if len(set(counts)) == 1:
+                        # Score = nombre d'occurrences * priorité (plus le séparateur est rare, mieux c'est)
+                        # On préfère ; et \t à , car , peut être dans le contenu
+                        priority = len(separators) - separators.index(sep)
+                        sep_scores[sep] = (counts[0], priority)
+                
+                if sep_scores:
+                    # Retourner le séparateur avec le meilleur score
+                    # Priorité : 1. Nombre de colonnes raisonnable (2-20), 2. Priorité du séparateur
+                    valid_seps = {sep: score for sep, score in sep_scores.items() if 1 <= score[0] <= 20}
+                    
+                    if valid_seps:
+                        detected_sep = max(valid_seps.items(), key=lambda x: (x[1][1], x[1][0]))[0]
+                        logger.info(f"Séparateur détecté: '{detected_sep}' ({valid_seps[detected_sep][0]} colonnes)")
+                        return detected_sep
+                    
+            except Exception as e:
+                logger.debug(f"Erreur avec encodage {encoding}: {str(e)}")
+                continue
+        
+        # Par défaut, retourner virgule
+        logger.info("Séparateur par défaut: ','")
+        return ','
+        
+    except Exception as e:
+        logger.warning(f"Erreur lors de la détection du séparateur: {str(e)}")
+        return ','
+
+def read_file_to_dataframe(file_content: bytes, filename: str, separator: Optional[str] = None) -> pd.DataFrame:
     """
     Lit un fichier (CSV, Excel, etc.) et retourne un DataFrame.
     
     Args:
         file_content: Contenu du fichier en bytes
         filename: Nom du fichier pour détecter le format
+        separator: Séparateur à utiliser (détection automatique si None)
         
     Returns:
         DataFrame
@@ -21,16 +85,21 @@ def read_file_to_dataframe(file_content: bytes, filename: str) -> pd.DataFrame:
     
     try:
         if file_lower.endswith('.csv'):
-            # Essayer différents encodages et séparateurs
+            # Si pas de séparateur spécifié, le détecter
+            if separator is None:
+                separator = detect_separator(file_content, filename)
+            
+            # Essayer différents encodages
             for encoding in ['utf-8', 'latin-1', 'iso-8859-1']:
                 try:
-                    df = pd.read_csv(BytesIO(file_content), encoding=encoding)
+                    df = pd.read_csv(BytesIO(file_content), encoding=encoding, sep=separator)
                     if not df.empty:
-                        logger.info(f"CSV chargé avec l'encodage {encoding}")
+                        logger.info(f"CSV chargé avec l'encodage {encoding} et séparateur '{separator}'")
                         return df
                 except:
                     continue
-            # Essayer avec détection automatique du séparateur
+            
+            # Dernier essai avec détection automatique
             df = pd.read_csv(BytesIO(file_content), sep=None, engine='python')
             return df
             
