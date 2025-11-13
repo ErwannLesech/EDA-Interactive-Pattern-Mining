@@ -273,3 +273,61 @@ def binarise_transactions(transactions: List[List[str]]) -> pd.DataFrame:
     df_binary = pd.DataFrame(binary_array, columns=encoder.columns_)
     
     return df_binary
+
+
+def prepare_dataset_for_mining(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Prépare un dataset pour l'extraction de motifs.
+    Convertit le format transactionnel en format one-hot encoding pour mlxtend.
+    
+    Args:
+        df: DataFrame au format transactionnel (colonnes: transaction_id, items)
+        
+    Returns:
+        DataFrame au format one-hot encoding
+    """
+    # Vérifier si c'est déjà au bon format (toutes les colonnes sont booléennes)
+    if all(df[col].dtype == bool for col in df.columns):
+        return df
+    
+    # Si le DataFrame a une colonne 'items', c'est le format transactionnel
+    if 'items' in df.columns:
+        # Convertir la colonne items en liste de listes
+        transactions = df['items'].apply(lambda x: str(x).split(',')).tolist()
+    else:
+        # Sinon, chaque ligne est une transaction (format matriciel)
+        # Convertir en liste en prenant les colonnes non-nulles
+        transactions = []
+        for _, row in df.iterrows():
+            transaction = [str(col) for col, val in row.items() if pd.notna(val) and val != '' and val != 0]
+            transactions.append(transaction)
+    
+    # Encoder en format binaire
+    return binarise_transactions(transactions)
+
+
+def convert_to_transactions(df: pd.DataFrame) -> List[List[str]]:
+    """
+    Convertit un DataFrame en liste de transactions pour TwoStep/GDPS.
+    
+    Args:
+        df: DataFrame (format transactionnel ou matriciel)
+        
+    Returns:
+        Liste de listes représentant les transactions
+    """
+    # Si le DataFrame a une colonne 'items', c'est le format transactionnel
+    if 'items' in df.columns:
+        transactions = df['items'].apply(lambda x: str(x).split(',')).tolist()
+    else:
+        # Format matriciel : chaque ligne est une transaction
+        transactions = []
+        for _, row in df.iterrows():
+            transaction = [str(col) for col, val in row.items() if pd.notna(val) and val != '' and val != 0 and val is not False]
+            if transaction:  # Ne garder que les transactions non vides
+                transactions.append(transaction)
+    
+    # Nettoyer les items (enlever espaces, etc.)
+    transactions = [[item.strip() for item in transaction if item.strip()] for transaction in transactions]
+    
+    return transactions

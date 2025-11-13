@@ -4,6 +4,7 @@ import pandas as pd
 from components.upload import upload_component
 from components.visualizations import visualize_patterns
 from components.feedback import feedback_component
+from components.sampling import sampling_tab
 
 # Configuration de la page
 st.set_page_config(
@@ -30,17 +31,10 @@ with st.sidebar:
     max_length = st.slider("Autres paramètres", 2, 10, 5)
     
     st.markdown("---")
-    
-    # Paramètres d'échantillonnage
-    st.subheader("Échantillonnage")
-    k_samples = st.number_input("Nombre de motifs", 10, 500, 50)
-    strategy = st.selectbox("Remise", ["avec", "sans"])
-    
-    st.markdown("---")
     st.info("Uploadez un fichier CSV, Excel, Json ou Txt sous les formats transactionnels, transactionnels inversés, séquentiels ou matriciels.")
 
-# Corps principal
-tab1, tab2, tab3 = st.tabs(["📤 Upload", "🔍 Motifs", "📊 Analyse"])
+# Corps principal - Ajout de l'onglet Échantillonnage
+tab1, tab2, tab3, tab4 = st.tabs(["📤 Upload", "🔍 Motifs", "🎲 Échantillonnage", "📊 Analyse"])
 
 with tab1:
     upload_component(BACKEND_URL)
@@ -65,8 +59,15 @@ with tab2:
         # feedback_component()
         st.info("Les motifs extraits apparaîtront ici après l'extraction")
         st.info("Le composant de feedback sera intégré avec les motifs extraits")
-    
+
 with tab3:
+    st.header("🎲 Échantillonnage de Motifs")
+    
+    # Utiliser le composant d'échantillonnage
+    dataset_id = st.session_state.get('active_dataset_id')
+    sampling_tab(BACKEND_URL, dataset_id)
+    
+with tab4:
     st.header("Analyse et Visualisations")
     
     if not st.session_state.get('active_dataset_id'):
@@ -87,7 +88,7 @@ with tab3:
                 # Afficher les statistiques du dataset
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("� Lignes", f"{dataset_info['rows']:,}")
+                    st.metric("📊 Lignes", f"{dataset_info['rows']:,}")
                 with col2:
                     st.metric("📐 Colonnes", f"{len(dataset_info['columns'])}")
                 with col3:
