@@ -85,6 +85,66 @@ async def detect_file_separator(file: UploadFile = File(...)):
             detail=f"Erreur lors de la détection: {str(e)}"
         )
 
+@router.post("/detect-dataset-type")
+async def detect_dataset_type_endpoint(file: UploadFile = File(...), separator: Optional[str] = Form(None)):
+    """
+    Détecte automatiquement le type de dataset (transactional, sequential, matrix, inversed).
+    
+    Args:
+        file: Fichier à analyser
+        separator: Séparateur optionnel pour les fichiers CSV
+        
+    Returns:
+        Type détecté et colonnes candidates
+    """
+    try:
+        if not file.filename:
+            raise HTTPException(
+                status_code=400,
+                detail="Le nom du fichier est requis"
+            )
+        
+        # Lire le contenu
+        contents = await file.read()
+        
+        # Convertir en DataFrame
+        try:
+            df = read_file_to_dataframe(contents, file.filename, separator)
+        except Exception as e:
+            logger.error(f"Impossible de lire le fichier pour détection de type: {str(e)}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Impossible de lire le fichier: {str(e)}"
+            )
+        
+        # Détecter le type
+        detected_type, trans_col, items_col, seq_col = detect_dataset_type(df)
+        
+        type_names = {
+            "transactional": "Transactionnel",
+            "sequential": "Séquentiel",
+            "matrix": "Matricielle",
+            "inversed": "Transactionnel inversé"
+        }
+        
+        return {
+            "detected_type": detected_type,
+            "type_name": type_names.get(detected_type, detected_type),
+            "transaction_col": trans_col,
+            "items_col": items_col,
+            "sequence_col": seq_col,
+            "message": f"Type détecté: {type_names.get(detected_type, detected_type)}"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur lors de la détection du type de dataset: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur: {str(e)}"
+        )
+
 @router.post("/upload", response_model=UploadResponse)
 async def upload_dataset(
     file: UploadFile = File(...),
@@ -169,8 +229,8 @@ async def upload_dataset(
         # Utiliser le nom personnalisé ou le nom du fichier
         final_dataset_name = dataset_name if dataset_name else file.filename
         
-        # Sauvegarde temporaire avec le nom personnalisé
-        dataset_id = DatasetStorage.save_dataset(df_normalized, final_dataset_name)
+        # Sauvegarde temporaire avec le nom personnalisé et le type
+        dataset_id = DatasetStorage.save_dataset(df_normalized, final_dataset_name, dataset_type)
         
         # Préparation de la réponse
         preview_data = df_normalized.head(10).to_dict(orient="records")
@@ -213,12 +273,23 @@ async def get_dataset(dataset_id: str):
                 detail=f"Dataset {dataset_id} non trouvé"
             )
         
-        return {
+        # Récupérer les métadonnées
+        metadata = DatasetStorage.get_dataset_metadata(dataset_id)
+        
+        response = {
             "dataset_id": dataset_id,
             "rows": len(df),
             "columns": df.columns.tolist(),
             "preview": df.head(10).to_dict(orient="records")
         }
+        
+        # Ajouter les métadonnées si disponibles
+        if metadata:
+            response["dataset_type"] = metadata.get("dataset_type", "unknown")
+            response["is_sequential"] = metadata.get("is_sequential", False)
+            response["name"] = metadata.get("name", dataset_id)
+        
+        return response
         
     except HTTPException:
         raise
