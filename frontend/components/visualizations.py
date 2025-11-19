@@ -13,17 +13,19 @@ def visualize_patterns(patterns_df: pd.DataFrame):
     fig = px.scatter(
         patterns_df,
         x="support",
-        y="lift",
-        size="length",
-        hover_data=["items"],
-        title="Support vs Lift"
+        y="area",
+        size="longueur",
+        hover_data=["itemsets"],
+        title="Support vs Area"
     )
     st.plotly_chart(fig, use_container_width=True)
     
     # Distribution des longueurs
     fig2 = px.histogram(
         patterns_df,
-        x="length",
+        x="longueur",
         title="Distribution des longueurs de motifs"
     )
     st.plotly_chart(fig2, use_container_width=True)
+    # Affichage du tableau des motifs
+    st.dataframe(patterns_df)

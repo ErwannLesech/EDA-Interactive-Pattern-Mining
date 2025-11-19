@@ -283,13 +283,13 @@ def display_sampled_patterns(result: dict, method: str):
         csv = df_patterns.to_csv(index=False)
         # Créer une clé unique basée sur l'identifiant de l'objet result
         unique_id = id(result)
-        st.download_button(
-            label="📥 Télécharger les motifs (CSV)",
-            data=csv,
-            file_name=f"motifs_{method.replace(' ', '_')}_{result.get('k', 0)}.csv",
-            mime="text/csv",
-            key=f"download_patterns_{method.replace(' ', '_')}_{result.get('k', 0)}_{unique_id}"
-        )
+        # st.download_button(
+        #     label="📥 Télécharger les motifs (CSV)",
+        #     data=csv,
+        #     file_name=f"motifs_{method.replace(' ', '_')}_{result.get('k', 0)}.csv",
+        #     mime="text/csv",
+        #     key=f"download_patterns_{method.replace(' ', '_')}_{result.get('k', 0)}_{unique_id}"
+        # )
 
 
 
