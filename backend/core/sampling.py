@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from typing import List, Tuple, FrozenSet
 import random
+import time
 import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -14,6 +15,7 @@ class PatternSampler:
 
     def __init__(self, patterns: pd.DataFrame):
         self.patterns = patterns
+        self.feedback_history = []  # Historique des feedbacks pour évaluation
         random.seed(42)
         np.random.seed(42)
 
@@ -148,6 +150,15 @@ class PatternSampler:
         return result
     
     def user_feedback(self, index : int, alpha: float, beta: float, rating: int):
+        # Enregistrer le feedback pour l'évaluation
+        self.feedback_history.append({
+            "pattern_id": index,
+            "rating": rating,
+            "alpha": alpha,
+            "beta": beta,
+            "timestamp": time.time()
+        })
+        
         if rating==1:
             self.patterns.iloc[index]['composite_score']+=np.exp(-alpha)
         else:

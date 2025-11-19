@@ -7,6 +7,7 @@ from typing import List, Optional
 import pandas as pd
 from io import BytesIO
 import logging
+import time
 from core.pattern_mining import PatternMiner
 from core.sampling import PatternSampler
 from fastapi.encoders import jsonable_encoder
@@ -458,6 +459,91 @@ async def provide_pattern_feedback(
         raise HTTPException(
             status_code=500,
             detail=f"Erreur lors du traitement du feedback : {str(e)}"
+        )
+
+
+# ==================== ENDPOINT D'ÉVALUATION ====================
+@router.get("/patterns/evaluate")
+async def evaluate_patterns():
+    """
+    Évalue la qualité de l'échantillonnage actuel avec plusieurs métriques :
+    - Taux d'acceptation (via feedback)
+    - Diversité des motifs
+    - Couverture du pool de motifs
+    - Stabilité (sensibilité à la seed)
+    - Temps de réponse
+    """
+    try:
+        from core.evaluation import PatternEvaluator
+        
+        # Vérifier qu'on a des motifs
+        if pattern_sampler.patterns.empty:
+            raise HTTPException(
+                status_code=400,
+                detail="Aucun motif disponible. Lancez d'abord l'extraction."
+            )
+        
+        evaluator = PatternEvaluator()
+        
+        # Récupérer les motifs échantillonnés (utiliser les derniers échantillonnés)
+        # On utilise tous les motifs avec un composite_score si disponible
+        if 'composite_score' in pattern_sampler.patterns.columns:
+            # Trier par score et prendre le top k
+            sampled_df = pattern_sampler.patterns.nlargest(
+                min(50, len(pattern_sampler.patterns)), 
+                'composite_score'
+            )
+        else:
+            # Prendre un échantillon aléatoire
+            sampled_df = pattern_sampler.patterns.head(
+                min(50, len(pattern_sampler.patterns))
+            )
+        
+        # Récupérer l'historique des feedbacks
+        feedback_list = pattern_sampler.feedback_history
+        
+        # Fonction d'échantillonnage pour stabilité et temps
+        def sample_func(df, support_weight, surprise_weight, redundancy_weight, k, replacement):
+            sampler = PatternSampler(df)
+            return sampler.importance_sampling(
+                support_weight, surprise_weight, redundancy_weight, k, replacement
+            )
+        
+        # Paramètres par défaut pour les tests
+        params = {
+            "support_weight": 0.4,
+            "surprise_weight": 0.4,
+            "redundancy_weight": 0.2,
+            "k": min(50, len(pattern_sampler.patterns)),
+            "replacement": True
+        }
+        
+        # Évaluation complète
+        results = evaluator.comprehensive_evaluation(
+            sampled_patterns_df=sampled_df,
+            all_patterns_df=pattern_sampler.patterns,
+            feedback_list=feedback_list,
+            sampling_function=sample_func,
+            params=params
+        )
+        
+        return {
+            "evaluation": results,
+            "metadata": {
+                "total_patterns": len(pattern_sampler.patterns),
+                "sampled_patterns": len(sampled_df),
+                "total_feedbacks": len(feedback_list),
+                "evaluation_timestamp": time.time()
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur lors de l'évaluation : {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de l'évaluation : {str(e)}"
         )
 
 
