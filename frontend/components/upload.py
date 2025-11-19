@@ -149,6 +149,10 @@ def upload_component(backend_url: str):
                         st.subheader("Aperçu des données")
                         preview_df = pd.DataFrame(data["preview"])
                         st.dataframe(preview_df)
+
+                        st.session_state["motifs_df"] = pd.DataFrame()
+                        st.session_state["sampled_df"] = pd.DataFrame()
+                        st.session_state["extraction_done"] = False
                         
                     else:
                         st.error(f"Erreur : {response.json()}")
