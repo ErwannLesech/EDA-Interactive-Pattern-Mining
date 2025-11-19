@@ -36,6 +36,7 @@ class PatternMiner:
         self.sequential = sequential
         self.frequent_itemsets = None
         self.rules = None
+
     def mine_patterns(self, min_support: float = 0.01, min_confidence: float = 0.5) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Extrait les motifs fréquents et les règles d'association
         
@@ -44,7 +45,7 @@ class PatternMiner:
             min_confidence (float): La confiance minimum pour les règles d'association.
         
         Returns:
-            pd.DataFrame: Un DataFrame contenant les règles d'association.
+            tuple: (frequent_itemsets, rules) - DataFrames contenant les motifs et les règles
         """
         transactions_len = len(self.transactions)
         if not self.sequential:
