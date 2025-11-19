@@ -227,8 +227,10 @@ async def upload_dataset(
         if dataset_type != "sequential":
             items_list = df_normalized['items'].apply(lambda x: x.split(',') if isinstance(x, str) else x)
             pattern_miner.transactions = binarise_transactions(items_list.to_list())
+            pattern_miner.sequential = False
         else:
             pattern_miner.transactions = df_normalized['items'].apply(lambda x: x.split(',') if isinstance(x, str) else x).to_frame()
+            pattern_miner.sequential = True
         pattern_miner.frequent_itemsets, pattern_miner.rules = None,None
         # Utiliser le nom personnalisé ou le nom du fichier
         final_dataset_name = dataset_name if dataset_name else file.filename
@@ -411,16 +413,16 @@ async def resample_patterns(
             replacement=replacement
         )
         indexes=[i for _, i in sampled_pattern]
-        return {
+        return jsonable_encoder({
             "frequent_itemsets": pattern_sampler.patterns.iloc[indexes].to_dict(orient="records"),
             "sampled_patterns": [
                 {
                     "itemset": list(itemset),
-                    "index": index
+                    "index": int(index)
                 } for itemset, index in sampled_pattern
             ],
             "message": f"Rééchantillonnage réussi: {len(sampled_pattern)} motifs échantillonnés."
-        }
+        })
         
     except HTTPException:
         raise
@@ -439,6 +441,7 @@ async def provide_pattern_feedback(
     rating: int = Form(0)
 ):
     """Prend en compte le feedback utilisateur pour ajuster les scores des motifs"""
+    logger.info(f"Réception du feedback pour le motif index {index} avec rating {rating}")
     try:
         pattern_sampler.user_feedback(index, alpha, beta, rating)
         

@@ -39,6 +39,11 @@ with st.sidebar:
     strategy = st.selectbox("Remise", ["avec", "sans"])
     
     st.markdown("---")
+
+    st.subheader("Feedback")
+    alpha = st.number_input("Alpha (like)", 0.01, 1.0, 0.3, 0.01)
+    beta = st.number_input("Beta (dislike)", 0.01, 1.0, 0.3, 0.01)
+    st.markdown("---")
     st.info("Uploadez un fichier CSV, Excel, Json ou Txt sous les formats transactionnels, transactionnels inversés, séquentiels ou matriciels.")
 
 # Corps principal
@@ -54,12 +59,7 @@ with tab2:
     if not st.session_state.get('active_dataset_id'):
         st.warning("⚠️ Aucun dataset chargé")
         st.info("👉 Allez dans l'onglet 'Upload' pour charger un dataset avant de lancer l'extraction")
-        if "motifs_df" not in st.session_state:
-            st.session_state["motifs_df"] = pd.DataFrame()
-        if "sampled_df" not in st.session_state:
-            st.session_state["sampled_df"] = pd.DataFrame()
-        if "extraction_done" not in st.session_state:
-            st.session_state["extraction_done"] = False
+        
     else:
         dataset_name = st.session_state.get('active_dataset_name', 'Dataset')
         st.success(f"✅ Dataset actif: **{dataset_name}**")
@@ -89,14 +89,19 @@ with tab2:
                     )
                     if response.status_code == 200:
                         result = response.json()
-                        st.session_state["motifs_df"] = pd.DataFrame(result["frequent_itemsets"])
-                        st.session_state["sampled_df"] = pd.DataFrame(result["sampled_patterns"])
+                        st.session_state["motifs_df"] = pd.DataFrame(result.get("frequent_itemsets", []))
+                        st.session_state["sampled_df"] = pd.DataFrame(result.get("sampled_patterns", []))
+                        # bump feedback epoch so feedback buttons reset for the new sample
+                        st.session_state["feedback_epoch"] = st.session_state.get("feedback_epoch", 0) + 1
                         if not st.session_state["motifs_df"].empty:
                             if len(st.session_state["motifs_df"]) < k_samples:
-                                st.warning(f"⚠️ Seuls {len(st.session_state['motifs_df'])} motifs ont été extraits, inférieur au nombre demandé ({k_samples}).")
+                                st.session_state['warning'] = True
+                                st.session_state['message'] = f"⚠️ Seuls {len(st.session_state['motifs_df'])} motifs ont été extraits, inférieur au nombre demandé ({k_samples})."
                             else:
-                                st.success(result.get("message", "Extraction terminée !"))
+                                st.session_state['warning'] = False
+                                st.session_state['message'] = result.get("message", "Extraction terminée !")
                         st.session_state["extraction_done"] = True
+                        st.rerun()
                     else:
                         st.error("❌ Extraction impossible"+ f" (Statut {response.status_code})")
         else:
@@ -119,16 +124,25 @@ with tab2:
                     )
                     if response.status_code == 200:
                         result = response.json()
-                        st.session_state["motifs_df"] = pd.DataFrame(result["frequent_itemsets"])
-                        st.session_state["sampled_df"] = pd.DataFrame(result["sampled_patterns"])
+                        st.session_state["motifs_df"] = pd.DataFrame(result.get("frequent_itemsets", []))
+                        st.session_state["sampled_df"] = pd.DataFrame(result.get("sampled_patterns", []))
+                        # bump feedback epoch so feedback buttons reset for the new resample
+                        st.session_state["feedback_epoch"] = st.session_state.get("feedback_epoch", 0) + 1
                         if not st.session_state["motifs_df"].empty:
                             if len(st.session_state["motifs_df"]) < k_samples:
-                                st.warning(f"⚠️ Seuls {len(st.session_state['motifs_df'])} motifs ont été extraits, inférieur au nombre demandé ({k_samples}).")
+                                st.session_state['warning'] = True
+                                st.session_state['message'] = f"⚠️ Seuls {len(st.session_state['motifs_df'])} motifs ont été extraits, inférieur au nombre demandé ({k_samples})."
                             else:
-                                st.success(result.get("message", "Extraction terminée !"))
+                                st.session_state['warning'] = False
+                                st.session_state['message'] = result.get("message", "Extraction terminée !")
                         st.session_state["extraction_done"] = True
+                        st.rerun()
                     else:
                         st.error("❌ Extraction impossible"+ f" (Statut {response.status_code})")
+        if st.session_state.get('warning', False) and st.session_state.get('extraction_done', False):
+            st.warning(st.session_state['message'])
+        elif st.session_state.get('extraction_done', False):
+            st.success(st.session_state['message'])
         if not st.session_state["motifs_df"].empty:
             visualize_patterns(st.session_state["motifs_df"])
         if not st.session_state["sampled_df"].empty:
@@ -146,7 +160,12 @@ with tab2:
                             itemset_str = str(row['itemset'])
                         st.markdown(f"**{itemset_str}**")
                         # Boutons de feedback
-                        feedback_component(pattern_id=row.get("id", row.name), backend_url=BACKEND_URL)
+                        feedback_component(
+                            pattern_id=row.get("id", row.name),
+                            backend_url=BACKEND_URL,
+                            alpha=alpha,
+                            beta=beta
+                        )
         # # Emplacement pour feedback
         # # feedback_component()
         # st.info("Les motifs extraits apparaîtront ici après l'extraction")
