@@ -54,45 +54,87 @@ with tab2:
     if not st.session_state.get('active_dataset_id'):
         st.warning("⚠️ Aucun dataset chargé")
         st.info("👉 Allez dans l'onglet 'Upload' pour charger un dataset avant de lancer l'extraction")
+        if "motifs_df" not in st.session_state:
+            st.session_state["motifs_df"] = pd.DataFrame()
+        if "sampled_df" not in st.session_state:
+            st.session_state["sampled_df"] = pd.DataFrame()
+        if "extraction_done" not in st.session_state:
+            st.session_state["extraction_done"] = False
     else:
         dataset_name = st.session_state.get('active_dataset_name', 'Dataset')
         st.success(f"✅ Dataset actif: **{dataset_name}**")
-        motifs_df = pd.DataFrame()
-        sampled_df = pd.DataFrame()
-        if st.button("🚀 Lancer l'extraction", type="primary"):
-            if support_weight + surprise_weight + redundancy_weight != 1:
-                st.error(f"❌ La somme des poids doit être égale à 1. Elle est égale à {support_weight + surprise_weight + redundancy_weight:.2f}. Ajustez les curseurs.")
-            else:
-                with st.spinner("Extraction en cours..."):
-                    response = requests.post(
-                    f"{BACKEND_URL}/api/patterns/mine",
-                    data={  # Utilise 'data' pour envoyer les paramètres en Form
-                        "min_support": min_support,
-                    "support_weight": support_weight,
-                    "surprise_weight": surprise_weight,
-                    "redundancy_weight": redundancy_weight,
-                    "k": k_samples,
-                    "replacement": strategy == "avec"
-                },
-                timeout=30
-                )
-                if response.status_code == 200:
-                    result = response.json()
-                    motifs_df = pd.DataFrame(result["frequent_itemsets"])
-                    sampled_df = pd.DataFrame(result["sampled_patterns"])
-                    if not motifs_df.empty:
-                        if len(motifs_df) < k_samples:
-                            st.warning(f"⚠️ Seuls {len(motifs_df)} motifs ont été extraits, inférieur au nombre demandé ({k_samples}).")
-                        else:
-                            st.success(result.get("message", "Extraction terminée !"))
+        if "motifs_df" not in st.session_state:
+            st.session_state["motifs_df"] = pd.DataFrame()
+        if "sampled_df" not in st.session_state:
+            st.session_state["sampled_df"] = pd.DataFrame()
+        if "extraction_done" not in st.session_state:
+            st.session_state["extraction_done"] = False
+        if not st.session_state["extraction_done"]:
+            if st.button("🚀 Lancer l'extraction", type="primary"):
+                if support_weight + surprise_weight + redundancy_weight != 1:
+                    st.error(f"❌ La somme des poids doit être égale à 1. Elle est égale à {support_weight + surprise_weight + redundancy_weight:.2f}. Ajustez les curseurs.")
                 else:
-                    st.error("❌ Extraction impossible"+ f" (Statut {response.status_code})")
-        if not motifs_df.empty:
-            visualize_patterns(motifs_df)
-        if not sampled_df.empty:
+                    with st.spinner("Extraction en cours..."):
+                        response = requests.post(
+                        f"{BACKEND_URL}/api/patterns/mine",
+                        data={  # Utilise 'data' pour envoyer les paramètres en Form
+                            "min_support": min_support,
+                        "support_weight": support_weight,
+                        "surprise_weight": surprise_weight,
+                        "redundancy_weight": redundancy_weight,
+                        "k": k_samples,
+                        "replacement": strategy == "avec"
+                    },
+                    timeout=30
+                    )
+                    if response.status_code == 200:
+                        result = response.json()
+                        st.session_state["motifs_df"] = pd.DataFrame(result["frequent_itemsets"])
+                        st.session_state["sampled_df"] = pd.DataFrame(result["sampled_patterns"])
+                        if not st.session_state["motifs_df"].empty:
+                            if len(st.session_state["motifs_df"]) < k_samples:
+                                st.warning(f"⚠️ Seuls {len(st.session_state['motifs_df'])} motifs ont été extraits, inférieur au nombre demandé ({k_samples}).")
+                            else:
+                                st.success(result.get("message", "Extraction terminée !"))
+                        st.session_state["extraction_done"] = True
+                    else:
+                        st.error("❌ Extraction impossible"+ f" (Statut {response.status_code})")
+        else:
+            if st.button("🔄 Relancer l'extraction"):
+                if support_weight + surprise_weight + redundancy_weight != 1:
+                    st.error(f"❌ La somme des poids doit être égale à 1. Elle est égale à {support_weight + surprise_weight + redundancy_weight:.2f}. Ajustez les curseurs.")
+                else:
+                    with st.spinner("Extraction en cours..."):
+                        response = requests.post(
+                        f"{BACKEND_URL}/api/patterns/resample",
+                        data={  # Utilise 'data' pour envoyer les paramètres en Form
+                            "min_support": min_support,
+                        "support_weight": support_weight,
+                        "surprise_weight": surprise_weight,
+                        "redundancy_weight": redundancy_weight,
+                        "k": k_samples,
+                        "replacement": strategy == "avec"
+                    },
+                    timeout=30
+                    )
+                    if response.status_code == 200:
+                        result = response.json()
+                        st.session_state["motifs_df"] = pd.DataFrame(result["frequent_itemsets"])
+                        st.session_state["sampled_df"] = pd.DataFrame(result["sampled_patterns"])
+                        if not st.session_state["motifs_df"].empty:
+                            if len(st.session_state["motifs_df"]) < k_samples:
+                                st.warning(f"⚠️ Seuls {len(st.session_state['motifs_df'])} motifs ont été extraits, inférieur au nombre demandé ({k_samples}).")
+                            else:
+                                st.success(result.get("message", "Extraction terminée !"))
+                        st.session_state["extraction_done"] = True
+                    else:
+                        st.error("❌ Extraction impossible"+ f" (Statut {response.status_code})")
+        if not st.session_state["motifs_df"].empty:
+            visualize_patterns(st.session_state["motifs_df"])
+        if not st.session_state["sampled_df"].empty:
             st.subheader("Feedback sur les motifs échantillonnés")
             n_cols = 5
-            rows = [sampled_df.iloc[i:i+n_cols] for i in range(0, len(sampled_df), n_cols)]
+            rows = [st.session_state["sampled_df"].iloc[i:i+n_cols] for i in range(0, len(st.session_state["sampled_df"]), n_cols)]
             for row_group in rows:
                 cols = st.columns(len(row_group))
                 for col, (_, row) in zip(cols, row_group.iterrows()):
