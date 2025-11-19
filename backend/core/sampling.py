@@ -82,7 +82,6 @@ class PatternSampler:
             + surprise_weight * np.array(self.patterns['surprise'].tolist())
             + redundancy_weight * (1 - np.array(self.patterns['redundancy'].tolist()))
         )
-        composite_scores=composite_scores/np.sum(composite_scores)
         self.patterns["composite_score"] = composite_scores.tolist()
     
     def importance_sampling(self,support_weight: float, surprise_weight: float, redundancy_weight: float, k: int, replacement: bool) -> List[Tuple[FrozenSet[str], int]]:
@@ -90,6 +89,7 @@ class PatternSampler:
         logger.info(f"Support weight: {support_weight}, Surprise weight: {surprise_weight}, replacement: {replacement}")
         if not 'composite_score' in self.patterns:
             self.composite_scoring(support_weight,surprise_weight,redundancy_weight)
+        self.patterns["composite_score"]=self.patterns["composite_score"]/np.sum(self.patterns["composite_score"])
         indexes = np.random.choice(range(len(self.patterns)),size=min(k, len(self.patterns)) if not replacement else k, replace=replacement, p=self.patterns["composite_score"])
         result: List[Tuple[FrozenSet[str], int]] = [(self.patterns.iloc[i]['itemsets'], i) for i in indexes]
         return result
