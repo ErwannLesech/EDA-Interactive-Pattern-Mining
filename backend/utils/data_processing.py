@@ -174,6 +174,8 @@ def normalize_to_transactional_format(
     - transaction_id: Identifiant unique de la transaction
     - items: Liste des items séparés par des virgules (str)
     
+    Pour les données séquentielles, l'ordre des items est préservé via la position.
+    
     Args:
         df: DataFrame original
         dataset_type: Type de dataset ('transactional', 'sequential', 'matrix', 'inversed')
@@ -184,36 +186,80 @@ def normalize_to_transactional_format(
     Returns:
         DataFrame normalisé
     """
+    logger.info(f"Normalisation dataset type={dataset_type}, trans_col={transaction_col}, items_col={items_col}")
+    
     # Handle inversed format: transpose and extract
     if dataset_type == "inversed":
         df_t = df.T
         df_t.columns = df_t.iloc[0]
         df_t = df_t[1:]
         df_t.reset_index(drop=True, inplace=True)
-        return pd.DataFrame({
+        result = pd.DataFrame({
             'transaction_id': df_t['transaction_id'],
             'items': df_t['items']
         })
+        logger.info(f"Dataset inversé normalisé: {len(result)} transactions")
+        return result
     
     # Handle matrix format: convert binary to items
     if dataset_type == "matrix":
+        # Auto-detect transaction column if not provided
+        if not transaction_col:
+            transaction_col = df.columns[0]
+        
         item_cols = [c for c in df.columns if c != transaction_col]
         items_list = df.apply(lambda row: ','.join([col for col in item_cols if row[col] == 1]), axis=1)
-        return pd.DataFrame({
+        result = pd.DataFrame({
             'transaction_id': df[transaction_col],
             'items': items_list
         })
+        # Remove empty transactions
+        result = result[result['items'].str.len() > 0]
+        logger.info(f"Dataset matriciel normalisé: {len(result)} transactions")
+        return result
     
-    # Handle sequential format: extract items from parentheses
+    # Handle sequential format: group by transaction and preserve order via position
     if dataset_type == "sequential":
-        import re
-        items_list = df[items_col].apply(lambda x: ','.join(re.findall(r'\((.*?)\)', str(x))).replace('),(', ','))
-        return pd.DataFrame({
-            'transaction_id': df[transaction_col],
-            'items': items_list
+        # Trouver les colonnes pertinentes
+        if not transaction_col:
+            transaction_col = next((c for c in df.columns if any(kw in c.lower() for kw in ['sequence', 'session', 'trans'])), df.columns[0])
+        if not items_col:
+            items_col = next((c for c in df.columns if 'item' in c.lower()), df.columns[-1])
+        
+        # Déterminer la colonne de position
+        position_col = next((c for c in df.columns if any(kw in c.lower() for kw in ['position', 'step', 'order', 'index'])), None)
+        
+        # Trier par transaction et position si disponible
+        if position_col:
+            df_sorted = df.sort_values([transaction_col, position_col])
+        else:
+            df_sorted = df.sort_values(transaction_col)
+        
+        # Grouper par transaction et joindre les items dans l'ordre
+        grouped = df_sorted.groupby(transaction_col)[items_col].apply(
+            lambda x: ','.join(str(item) for item in x if pd.notna(item))
+        ).reset_index()
+        
+        normalized_df = pd.DataFrame({
+            'transaction_id': grouped[transaction_col],
+            'items': grouped[items_col]
         })
+        
+        # Remove empty transactions
+        normalized_df = normalized_df[normalized_df['items'].str.len() > 0]
+        logger.info(f"Dataset séquentiel normalisé: {len(normalized_df)} séquences")
+        return normalized_df
     
     # Handle standard transactional format
+    # Auto-detect columns if not provided
+    if not transaction_col:
+        transaction_col = next((c for c in df.columns if any(kw in c.lower() for kw in ['transaction', 'trans', 'tid'])), df.columns[0])
+    if not items_col:
+        items_col = next((c for c in df.columns if c != transaction_col), df.columns[1] if len(df.columns) > 1 else None)
+    
+    if items_col is None:
+        raise ValueError(f"Impossible de trouver la colonne items. Colonnes disponibles: {df.columns.tolist()}")
+    
     items = df[items_col].apply(lambda x: ','.join([i.strip() for i in str(x).split(',')]) if pd.notna(x) else "")
     normalized_df = pd.DataFrame({
         'transaction_id': df[transaction_col],
@@ -222,7 +268,7 @@ def normalize_to_transactional_format(
     
     # Remove empty transactions
     normalized_df = normalized_df[normalized_df['items'].str.len() > 0]
-    logger.info(f"Dataset normalisé: {len(normalized_df)} transactions")
+    logger.info(f"Dataset transactionnel normalisé: {len(normalized_df)} transactions")
     
     return normalized_df
 

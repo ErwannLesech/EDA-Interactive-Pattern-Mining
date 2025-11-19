@@ -2,7 +2,26 @@ import pandas as pd
 from mlxtend.frequent_patterns import apriori, association_rules
 
 class PatternMiner:
-    """Classe pour l'extraction de motifs fréquents"""
+    """Classe pour l'extraction de motifs fréquents
+    
+    Note: Pour les datasets séquentiels (is_sequential=True), cette classe
+    extrait les motifs fréquents sans tenir compte de l'ordre.
+    Pour le mining séquentiel (ordre important), utilisez PrefixSpan ou GSP.
+    
+    Exemple d'utilisation avec le flag is_sequential:
+        from utils.storage import DatasetStorage
+        
+        metadata = DatasetStorage.get_dataset_metadata(dataset_id)
+        if metadata and metadata.get('is_sequential'):
+            # TODO: Implémenter le mining séquentiel avec PrefixSpan
+            # from prefixspan import PrefixSpan
+            # patterns = mine_sequential_patterns(dataset_id, min_support)
+            pass
+        else:
+            # Mining classique (ordre non important)
+            miner = PatternMiner(transactions)
+            itemsets, rules = miner.mine_patterns(min_support, min_confidence)
+    """
     
     def __init__(self, transactions: pd.DataFrame):
         self.transactions = transactions

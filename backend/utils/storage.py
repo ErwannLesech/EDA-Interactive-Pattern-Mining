@@ -21,8 +21,17 @@ class DatasetStorage:
     """Gestionnaire de stockage pour les datasets"""
     
     @staticmethod
-    def save_dataset(df: pd.DataFrame, dataset_name: str) -> str:
-        """Sauvegarde un DataFrame et retourne un identifiant unique."""
+    def save_dataset(df: pd.DataFrame, dataset_name: str, dataset_type: str = "transactional") -> str:
+        """Sauvegarde un DataFrame et retourne un identifiant unique.
+        
+        Args:
+            df: DataFrame à sauvegarder
+            dataset_name: Nom du dataset
+            dataset_type: Type de dataset (transactional, sequential, matrix, inversed)
+        
+        Returns:
+            dataset_id: Identifiant unique du dataset
+        """
         dataset_id = str(uuid.uuid4())
         filepath = STORAGE_DIR / f"{dataset_id}.csv"
         metadata_path = STORAGE_DIR / f"{dataset_id}.json"
@@ -31,16 +40,20 @@ class DatasetStorage:
             # Sauvegarder le dataset
             df.to_csv(filepath, index=False)
             
-            # Sauvegarder les métadonnées
+            # Sauvegarder les métadonnées enrichies
             metadata = {
                 "dataset_id": dataset_id,
                 "name": dataset_name,
-                "created_at": time.time()
+                "dataset_type": dataset_type,
+                "is_sequential": dataset_type == "sequential",
+                "created_at": time.time(),
+                "rows": len(df),
+                "columns": df.columns.tolist()
             }
             with open(metadata_path, 'w') as f:
-                json.dump(metadata, f)
+                json.dump(metadata, f, indent=2)
             
-            logger.info(f"Dataset sauvegardé: {dataset_id} ({dataset_name})")
+            logger.info(f"Dataset sauvegardé: {dataset_id} ({dataset_name}, type: {dataset_type})")
             return dataset_id
         except Exception as e:
             logger.error(f"Erreur sauvegarde dataset: {str(e)}")
@@ -59,6 +72,29 @@ class DatasetStorage:
             return pd.read_csv(filepath)
         except Exception as e:
             logger.error(f"Erreur chargement dataset: {str(e)}")
+            return None
+    
+    @staticmethod
+    def get_dataset_metadata(dataset_id: str) -> Optional[Dict]:
+        """Récupère les métadonnées d'un dataset.
+        
+        Args:
+            dataset_id: Identifiant du dataset
+            
+        Returns:
+            Dictionnaire avec les métadonnées ou None si non trouvé
+        """
+        metadata_path = STORAGE_DIR / f"{dataset_id}.json"
+        
+        if not metadata_path.exists():
+            logger.warning(f"Métadonnées non trouvées pour: {dataset_id}")
+            return None
+        
+        try:
+            with open(metadata_path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Erreur lecture métadonnées: {str(e)}")
             return None
     
     @staticmethod
@@ -95,11 +131,16 @@ class DatasetStorage:
                 # Lire les métadonnées si disponibles
                 metadata_path = STORAGE_DIR / f"{dataset_id}.json"
                 dataset_name = filepath.name
+                dataset_type = "unknown"
+                is_sequential = False
+                
                 if metadata_path.exists():
                     try:
                         with open(metadata_path, 'r') as f:
                             metadata = json.load(f)
                             dataset_name = metadata.get("name", filepath.name)
+                            dataset_type = metadata.get("dataset_type", "unknown")
+                            is_sequential = metadata.get("is_sequential", False)
                     except Exception:
                         pass
                 
@@ -107,6 +148,8 @@ class DatasetStorage:
                     "dataset_id": dataset_id,
                     "name": dataset_name,
                     "filename": filepath.name,
+                    "dataset_type": dataset_type,
+                    "is_sequential": is_sequential,
                     "rows": len(df),
                     "columns": len(df.columns),
                     "size_bytes": stats.st_size,
