@@ -222,9 +222,13 @@ async def upload_dataset(
                 status_code=400,
                 detail="Le dataset normalisé est vide. Vérifiez le format des données."
             )
+        
         # Split the string in 'items' column into lists
-        items_list = df_normalized['items'].apply(lambda x: x.split(',') if isinstance(x, str) else x)
-        pattern_miner.transactions = binarise_transactions(items_list.to_list())
+        if dataset_type != "sequential":
+            items_list = df_normalized['items'].apply(lambda x: x.split(',') if isinstance(x, str) else x)
+            pattern_miner.transactions = binarise_transactions(items_list.to_list())
+        else:
+            pattern_miner.transactions = df_normalized['items'].apply(lambda x: x.split(',') if isinstance(x, str) else x).to_frame()
         pattern_miner.frequent_itemsets, pattern_miner.rules = None,None
         # Utiliser le nom personnalisé ou le nom du fichier
         final_dataset_name = dataset_name if dataset_name else file.filename
