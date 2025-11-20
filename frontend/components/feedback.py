@@ -5,9 +5,9 @@ import requests
 Ceci n'est qu'un exemple de composant de feedback.
 """
 
-def feedback_component(pattern_id: int, backend_url: str, alpha: float = 0.3, beta: float = 0.3):
+def feedback_component(pattern_id: int, backend_url: str, alpha: float = 0.3, beta: float = 0.3, key: int = 0):
     """Composant de feedback pour un motif"""
-    rating_key = f"rating_{pattern_id}"
+    rating_key = f"rating_{pattern_id}_{st.session_state.get('feedback_epoch', 0)}"
     if rating_key not in st.session_state:
         st.session_state[rating_key] = 0  # 0 = none, 1 = like, -1 = dislike
 
@@ -16,7 +16,7 @@ def feedback_component(pattern_id: int, backend_url: str, alpha: float = 0.3, be
     # Show the Like button only if current rating is not 1
     with col1:
         if st.session_state[rating_key] != 1:
-            if st.button("👍", key=f"like_{pattern_id}"):
+            if st.button("👍", key=f"like_{key}"):
                 try:
                     payload = {
                         "index": int(pattern_id),
@@ -37,7 +37,7 @@ def feedback_component(pattern_id: int, backend_url: str, alpha: float = 0.3, be
     # Show the Dislike button only if current rating is not -1
     with col2:
         if st.session_state[rating_key] != -1:
-            if st.button("👎", key=f"dislike_{pattern_id}"):
+            if st.button("👎", key=f"dislike_{key}"):
                 try:
                     payload = {
                         "index": int(pattern_id),

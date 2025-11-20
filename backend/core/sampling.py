@@ -90,12 +90,15 @@ class PatternSampler:
         logger.info(f"Support weight: {support_weight}, Surprise weight: {surprise_weight}, replacement: {replacement}")
         if not 'composite_score' in self.patterns:
             self.composite_scoring(support_weight,surprise_weight,redundancy_weight)
+        
         indexes = np.random.choice(range(len(self.patterns)),size=min(k, len(self.patterns)) if not replacement else k, replace=replacement, p=self.patterns["composite_score"])
         result: List[Tuple[FrozenSet[str], int]] = [(self.patterns.iloc[i]['itemsets'], i) for i in indexes]
         return result
     
-    def user_feedback(self, index : int, alpha: float, beta: float, rating: int):
-        if rating==1:
-            self.patterns.iloc[index]['composite_score']+=np.exp(-alpha)
-        elif rating==-1:
-            self.patterns.iloc[index]['composite_score']-=np.exp(-beta)
+    def user_feedback(self, index: int, alpha: float, beta: float, rating: int):
+        logger.info(f"Réception du feedback utilisateur pour le motif index {index} avec rating {rating}")
+        col_idx : int = self.patterns.columns.get_loc('composite_score') # type: ignore[assignment]
+        if rating == 1:
+            self.patterns.iat[index, col_idx] += np.exp(-alpha)
+        elif rating == -1:
+            self.patterns.iat[index, col_idx] -= np.exp(-beta)

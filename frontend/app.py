@@ -161,10 +161,11 @@ with tab2:
                         st.markdown(f"**{itemset_str}**")
                         # Boutons de feedback
                         feedback_component(
-                            pattern_id=row.get("id", row.name),
+                            pattern_id=row.get("index", row.name),
                             backend_url=BACKEND_URL,
                             alpha=alpha,
-                            beta=beta
+                            beta=beta,
+                            key= row.get("id", row.name)
                         )
         # # Emplacement pour feedback
         # # feedback_component()
