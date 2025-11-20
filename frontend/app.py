@@ -4,6 +4,7 @@ import pandas as pd
 from components.upload import upload_component
 from components.visualizations import visualize_patterns
 from components.feedback import feedback_component
+from components.sampling import sampling_tab
 
 # Configuration de la page
 st.set_page_config(
@@ -41,13 +42,13 @@ with st.sidebar:
     st.markdown("---")
 
     st.subheader("Feedback")
-    alpha = st.number_input("Alpha (like)", 0.01, 1.0, 0.3, 0.01)
-    beta = st.number_input("Beta (dislike)", 0.01, 1.0, 0.3, 0.01)
+    alpha = st.number_input("Alpha (like)", 0.001, 1.0, 0.03, 0.001)
+    beta = st.number_input("Beta (dislike)", 0.001, 1.0, 0.03, 0.001)
     st.markdown("---")
     st.info("Uploadez un fichier CSV, Excel, Json ou Txt sous les formats transactionnels, transactionnels inversés, séquentiels ou matriciels.")
 
-# Corps principal
-tab1, tab2, tab3 = st.tabs(["📤 Upload", "🔍 Motifs", "📊 Analyse"])
+# Corps principal - Ajout de l'onglet Échantillonnage
+tab1, tab2, tab3, tab4 = st.tabs(["📤 Upload", "🔍 Motifs", "🎲 Échantillonnage", "📊 Analyse"])
 
 with tab1:
     upload_component(BACKEND_URL)
@@ -167,60 +168,137 @@ with tab2:
                             beta=beta,
                             key= row.get("id", row.name)
                         )
-        # # Emplacement pour feedback
-        # # feedback_component()
-        # st.info("Les motifs extraits apparaîtront ici après l'extraction")
-        # st.info("Le composant de feedback sera intégré avec les motifs extraits")
-    
+        
 with tab3:
-    st.header("Analyse et Visualisations")
+    st.header("🎲 Échantillonnage de Motifs")
     
-    if not st.session_state.get('active_dataset_id'):
-        st.warning("⚠️ Aucun dataset chargé")
-        st.info("👉 Allez dans l'onglet 'Upload' pour charger un dataset avant de lancer l'analyse")
+    # Utiliser le composant d'échantillonnage
+    dataset_id = st.session_state.get('active_dataset_id')
+    sampling_tab(BACKEND_URL, dataset_id)
+    
+with tab4:
+    st.header("📊 Évaluation & Reproductibilité")
+    
+    if not st.session_state.get('extraction_done'):
+        st.warning("⚠️ Aucune extraction effectuée")
+        st.info("👉 Allez dans l'onglet 'Motifs' pour lancer l'extraction avant d'évaluer")
     else:
-        dataset_id = st.session_state['active_dataset_id']
-        dataset_name = st.session_state.get('active_dataset_name', 'Dataset')
+        from components.evaluation import display_evaluation_metrics, display_evaluation_summary
         
-        st.success(f"✅ Dataset actif: **{dataset_name}**")
+        st.success("✅ Évaluation disponible pour les motifs extraits")
         
-        # Récupérer les infos du dataset
-        try:
-            response = requests.get(f"{BACKEND_URL}/api/dataset/{dataset_id}", timeout=5)
-            if response.status_code == 200:
-                dataset_info = response.json()
+        # Bouton pour lancer l'évaluation
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info("""
+            Cette analyse évalue la qualité de l'échantillonnage selon plusieurs critères :
+            - **Taux d'acceptation** : Pourcentage de motifs appréciés par l'utilisateur
+            - **Diversité** : Variété des motifs échantillonnés (dissimilarité)
+            - **Couverture** : Représentativité de l'échantillon par rapport au pool complet
+            - **Stabilité** : Reproductibilité avec différentes seeds aléatoires
+            - **Performance** : Temps de réponse de l'algorithme
+            """)
+        
+        with col2:
+            if st.button("🚀 Évaluer", type="primary", use_container_width=True):
+                with st.spinner("Évaluation en cours..."):
+                    try:
+                        response = requests.get(f"{BACKEND_URL}/api/patterns/evaluate", timeout=30)
+                        if response.status_code == 200:
+                            evaluation_data = response.json()
+                            st.session_state['evaluation_data'] = evaluation_data
+                            st.success("✅ Évaluation terminée!")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Erreur lors de l'évaluation (code {response.status_code})")
+                    except Exception as e:
+                        st.error(f"❌ Erreur: {str(e)}")
+        
+        st.markdown("---")
+        
+        # Afficher les résultats si disponibles
+        if 'evaluation_data' in st.session_state:
+            evaluation_data = st.session_state['evaluation_data']
+            
+            # Résumé compact
+            st.subheader("📈 Résumé des Métriques")
+            display_evaluation_summary(evaluation_data)
+            
+            st.markdown("---")
+            
+            # Métriques détaillées
+            display_evaluation_metrics(evaluation_data)
+            
+            st.markdown("---")
+            
+            # Export des résultats
+            st.subheader("💾 Export des Résultats")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Préparer les données pour export CSV
+                eval_results = evaluation_data.get("evaluation", {})
+                export_data = {
+                    "Métrique": [],
+                    "Valeur": []
+                }
                 
-                # Afficher les statistiques du dataset
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("� Lignes", f"{dataset_info['rows']:,}")
-                with col2:
-                    st.metric("📐 Colonnes", f"{len(dataset_info['columns'])}")
-                with col3:
-                    st.metric("🔍 Dataset ID", dataset_id[:8] + "...")
+                # Taux d'acceptation
+                acceptance = eval_results.get("acceptance", {})
+                export_data["Métrique"].append("Taux d'acceptation")
+                export_data["Valeur"].append(f"{acceptance.get('acceptance_rate', 0):.2%}")
+                export_data["Métrique"].append("Total feedbacks")
+                export_data["Valeur"].append(acceptance.get('total_feedbacks', 0))
                 
-                st.markdown("---")
+                # Diversité
+                diversity = eval_results.get("diversity", {})
+                export_data["Métrique"].append("Score de diversité")
+                export_data["Valeur"].append(f"{diversity.get('diversity_score', 0):.3f}")
+                export_data["Métrique"].append("Items uniques")
+                export_data["Valeur"].append(diversity.get('unique_items_count', 0))
                 
-                # Bouton pour lancer l'analyse
-                if st.button("🚀 Lancer l'analyse", type="primary", use_container_width=True):
-                    with st.spinner("Analyse en cours..."):
-                        # TODO: Appel API d'analyse avec dataset_id
-                        # Par exemple: requests.post(f"{BACKEND_URL}/api/analyze/{dataset_id}", ...)
-                        st.success("✅ Analyse lancée!")
-                        st.info("📊 L'analyse utilisera automatiquement le dataset chargé")
+                # Couverture
+                coverage = eval_results.get("coverage", {})
+                export_data["Métrique"].append("Couverture motifs")
+                export_data["Valeur"].append(f"{coverage.get('pattern_coverage', 0):.2%}")
+                export_data["Métrique"].append("Couverture items")
+                export_data["Valeur"].append(f"{coverage.get('item_coverage', 0):.2%}")
                 
-                # Zone pour afficher les résultats d'analyse
-                st.markdown("---")
-                st.subheader("📊 Résultats d'analyse")
-                st.info("Les résultats d'analyse et visualisations apparaîtront ici")
+                # Stabilité
+                stability = eval_results.get("stability", {})
+                if stability.get("stability_score"):
+                    export_data["Métrique"].append("Score de stabilité")
+                    export_data["Valeur"].append(f"{stability.get('stability_score', 0):.3f}")
                 
-                # Aperçu du dataset
-                with st.expander("👁️ Aperçu du dataset"):
-                    preview_df = pd.DataFrame(dataset_info['preview'])
-                    st.dataframe(preview_df, use_container_width=True)
+                # Performance
+                response_time = eval_results.get("response_time", {})
+                if response_time.get("mean_time"):
+                    export_data["Métrique"].append("Temps moyen (s)")
+                    export_data["Valeur"].append(f"{response_time.get('mean_time', 0):.3f}")
                 
-            else:
-                st.error("❌ Impossible de récupérer les informations du dataset")
+                # Score global
+                export_data["Métrique"].append("Score global")
+                export_data["Valeur"].append(f"{eval_results.get('overall_score', 0):.2%}")
                 
-        except Exception as e:
-            st.error(f"❌ Erreur de connexion au backend: {str(e)}")
+                export_df = pd.DataFrame(export_data)
+                csv = export_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Télécharger les métriques (CSV)",
+                    data=csv,
+                    file_name="evaluation_metrics.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            
+            with col2:
+                import json
+                json_str = json.dumps(evaluation_data, indent=2)
+                st.download_button(
+                    label="📥 Télécharger le rapport complet (JSON)",
+                    data=json_str,
+                    file_name="evaluation_report.json",
+                    mime="application/json",
+                    use_container_width=True
+                )
+        else:
+            st.info("👆 Cliquez sur 'Évaluer' pour générer les métriques d'évaluation")

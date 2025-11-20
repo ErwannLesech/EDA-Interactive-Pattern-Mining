@@ -7,6 +7,7 @@ from typing import List, Optional
 import pandas as pd
 from io import BytesIO
 import logging
+import time
 from core.pattern_mining import PatternMiner
 from core.sampling import PatternSampler
 from fastapi.encoders import jsonable_encoder
@@ -350,7 +351,8 @@ async def list_datasets():
             status_code=500,
             detail=f"Erreur : {str(e)}"
         )
-
+ 
+ # ==================== ENDPOINTS D'EXTRACTION ET RÉ-ÉCHANTILLONNAGE ====================
 @router.post("/patterns/mine")
 async def mine_patterns(
     min_support: float = Form(0.01),
@@ -432,7 +434,8 @@ async def resample_patterns(
             status_code=500,
             detail=f"Erreur lors du rééchantillonnage des motifs : {str(e)}"
         )
-    
+ 
+ # ==================== ENDPOINT DE FEEDBACK ====================
 @router.post("/feedback")
 async def provide_pattern_feedback(
     index: int = Form(...),
@@ -457,3 +460,263 @@ async def provide_pattern_feedback(
             status_code=500,
             detail=f"Erreur lors du traitement du feedback : {str(e)}"
         )
+
+
+# ==================== ENDPOINT D'ÉVALUATION ====================
+@router.get("/patterns/evaluate")
+async def evaluate_patterns():
+    """
+    Évalue la qualité de l'échantillonnage actuel avec plusieurs métriques :
+    - Taux d'acceptation (via feedback)
+    - Diversité des motifs
+    - Couverture du pool de motifs
+    - Stabilité (sensibilité à la seed)
+    - Temps de réponse
+    """
+    try:
+        from core.evaluation import PatternEvaluator
+        
+        # Vérifier qu'on a des motifs
+        if pattern_sampler.patterns.empty:
+            raise HTTPException(
+                status_code=400,
+                detail="Aucun motif disponible. Lancez d'abord l'extraction."
+            )
+        
+        evaluator = PatternEvaluator()
+        
+        # Récupérer les motifs échantillonnés (utiliser les derniers échantillonnés)
+        # On utilise tous les motifs avec un composite_score si disponible
+        if 'composite_score' in pattern_sampler.patterns.columns:
+            # Trier par score et prendre le top k
+            sampled_df = pattern_sampler.patterns.nlargest(
+                min(50, len(pattern_sampler.patterns)), 
+                'composite_score'
+            )
+        else:
+            # Prendre un échantillon aléatoire
+            sampled_df = pattern_sampler.patterns.head(
+                min(50, len(pattern_sampler.patterns))
+            )
+        
+        # Récupérer l'historique des feedbacks
+        feedback_list = pattern_sampler.feedback_history
+        
+        # Fonction d'échantillonnage pour stabilité et temps
+        def sample_func(df, support_weight, surprise_weight, redundancy_weight, k, replacement):
+            sampler = PatternSampler(df)
+            return sampler.importance_sampling(
+                support_weight, surprise_weight, redundancy_weight, k, replacement
+            )
+        
+        # Paramètres par défaut pour les tests
+        params = {
+            "support_weight": 0.4,
+            "surprise_weight": 0.4,
+            "redundancy_weight": 0.2,
+            "k": min(50, len(pattern_sampler.patterns)),
+            "replacement": True
+        }
+        
+        # Évaluation complète
+        results = evaluator.comprehensive_evaluation(
+            sampled_patterns_df=sampled_df,
+            all_patterns_df=pattern_sampler.patterns,
+            feedback_list=feedback_list,
+            sampling_function=sample_func,
+            params=params
+        )
+        
+        return {
+            "evaluation": results,
+            "metadata": {
+                "total_patterns": len(pattern_sampler.patterns),
+                "sampled_patterns": len(sampled_df),
+                "total_feedbacks": len(feedback_list),
+                "evaluation_timestamp": time.time()
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur lors de l'évaluation : {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de l'évaluation : {str(e)}"
+        )
+
+
+# ==================== ENDPOINTS D'ÉCHANTILLONNAGE ====================
+
+@router.post("/sample/importance")
+async def sample_patterns_importance(
+    dataset_id: str = Form(...),
+    k: int = Form(...),
+    support_weight: float = Form(1.0),
+    surprise_weight: float = Form(1.0),
+    redundancy_weight: float = Form(1.0),
+    replacement: bool = Form(True),
+    min_support: float = Form(0.01),
+    min_confidence: float = Form(0.5)
+):
+    """
+    Échantillonne k motifs en utilisant l'importance sampling.
+    
+    Args:
+        dataset_id: ID du dataset
+        k: Nombre de motifs à échantillonner
+        support_weight: Poids du support
+        surprise_weight: Poids de la surprise
+        redundancy_weight: Poids de la redondance
+        replacement: Avec ou sans remise
+        min_support: Support minimum pour l'extraction de motifs
+        min_confidence: Confiance minimum pour les règles
+    """
+    try:
+        from core.sampling import PatternSampler
+        from core.pattern_mining import PatternMiner
+        from utils.data_processing import prepare_dataset_for_mining
+        
+        # Récupérer le dataset
+        df = DatasetStorage.load_dataset(dataset_id)
+        if df is None:
+            raise HTTPException(status_code=404, detail="Dataset non trouvé")
+        
+        # Préparer le dataset au bon format (one-hot encoding)
+        df_binary = prepare_dataset_for_mining(df)
+        
+        # Extraire les motifs fréquents
+        miner = PatternMiner(df_binary)
+        frequent_itemsets, rules = miner.mine_patterns(min_support=min_support, min_confidence=min_confidence)
+        
+        if len(frequent_itemsets) == 0:
+            raise HTTPException(status_code=400, detail="Aucun motif fréquent trouvé. Essayez de réduire le min_support.")
+        
+        # Créer le sampler et échantillonner
+        sampler = PatternSampler(frequent_itemsets)
+        sampled = sampler.importance_sampling(
+            support_weight, surprise_weight, redundancy_weight, k, replacement
+        )
+        
+        # Formater les résultats pour l'affichage
+        sampled_patterns = []
+        # PatternSampler.importance_sampling returns (itemset, index)
+        for itemset, idx in sampled:
+            sampled_patterns.append({
+                "index": int(idx),
+                "itemset": list(itemset),
+                "support": float(frequent_itemsets.iloc[idx]["support"]),
+                "length": len(itemset),
+                "surprise": float(frequent_itemsets.iloc[idx].get("surprise", 0)),
+                "redundancy": float(frequent_itemsets.iloc[idx].get("redundancy", 0)),
+                "composite_score": float(frequent_itemsets.iloc[idx].get("composite_score", 0))
+            })
+        
+        return {
+            "method": "importance_sampling",
+            "k": k,
+            "total_patterns": len(frequent_itemsets),
+            "sampled_patterns": sampled_patterns,
+            "parameters": {
+                "support_weight": support_weight,
+                "surprise_weight": surprise_weight,
+                "redundancy_weight": redundancy_weight,
+                "replacement": replacement,
+                "min_support": min_support,
+                "min_confidence": min_confidence
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Erreur lors de l'importance sampling : {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sample/twostep")
+async def sample_patterns_twostep(
+    dataset_id: str = Form(...),
+    k: int = Form(...)
+):
+    """
+    Échantillonne k motifs en utilisant TwoStep sampling.
+    
+    Args:
+        dataset_id: ID du dataset
+        k: Nombre de motifs à échantillonner
+    """
+    try:
+        from core.sampling import PatternSampler
+        from utils.data_processing import convert_to_transactions
+        
+        # Récupérer le dataset
+        df = DatasetStorage.load_dataset(dataset_id)
+        if df is None:
+            raise HTTPException(status_code=404, detail="Dataset non trouvé")
+        
+        # Convertir en transactions (liste de listes)
+        transactions = convert_to_transactions(df)
+        
+        # Créer le sampler et échantillonner
+        sampler = PatternSampler(pd.DataFrame())  # Patterns vide pour TwoStep
+        sampled = sampler.twostep_sampling(transactions, k)
+        
+        return {
+            "method": "twostep_sampling",
+            "k": k,
+            "sampled_patterns": sampled
+        }
+        
+    except Exception as e:
+        logger.error(f"Erreur lors du TwoStep sampling : {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sample/gdps")
+async def sample_patterns_gdps(
+    dataset_id: str = Form(...),
+    k: int = Form(...),
+    min_norm: int = Form(1),
+    max_norm: int = Form(10),
+    utility: str = Form("freq")
+):
+    """
+    Échantillonne k motifs en utilisant GDPS.
+    
+    Args:
+        dataset_id: ID du dataset
+        k: Nombre de motifs à échantillonner
+        min_norm: Taille minimale des motifs
+        max_norm: Taille maximale des motifs
+        utility: Type d'utilité (freq, area, decay)
+    """
+    try:
+        from core.sampling import PatternSampler
+        from utils.data_processing import convert_to_transactions
+        
+        # Récupérer le dataset
+        df = DatasetStorage.load_dataset(dataset_id)
+        if df is None:
+            raise HTTPException(status_code=404, detail="Dataset non trouvé")
+        
+        # Convertir en transactions
+        transactions = convert_to_transactions(df)
+        
+        # Créer le sampler et échantillonner
+        sampler = PatternSampler(pd.DataFrame())
+        sampled = sampler.gdps_sampling(transactions, k, min_norm, max_norm, utility)
+        
+        return {
+            "method": "gdps_sampling",
+            "k": k,
+            "sampled_patterns": sampled,
+            "parameters": {
+                "min_norm": min_norm,
+                "max_norm": max_norm,
+                "utility": utility
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Erreur lors du GDPS sampling : {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
