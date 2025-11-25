@@ -1,5 +1,5 @@
 import pandas as pd
-from mlxtend.frequent_patterns import apriori, association_rules
+from mlxtend.frequent_patterns import association_rules, fpgrowth
 import logging
 from prefixspan import PrefixSpan
 logger = logging.getLogger(__name__)
@@ -50,9 +50,10 @@ class PatternMiner:
         transactions_len = len(self.transactions)
         if not self.sequential:
             # Générer les itemsets fréquents
-            self.frequent_itemsets = apriori(self.transactions, min_support=min_support, use_colnames=True)
+            self.frequent_itemsets = fpgrowth(self.transactions, min_support=min_support, use_colnames=True)
             # Générer les règles d'association
             logger.info(f"Nombre de motifs fréquents extraits: {len(self.frequent_itemsets)}")
+            logger.info(self.frequent_itemsets.head())
             #self.rules = association_rules(self.frequent_itemsets, metric="confidence", min_threshold=min_confidence)
             #logger.info(f"Nombre de règles d'association générées: {len(self.rules)}")
             self.frequent_itemsets['couverture'] = self.frequent_itemsets['support'] * transactions_len
