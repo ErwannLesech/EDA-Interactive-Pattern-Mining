@@ -165,7 +165,8 @@ class PatternSampler:
             self.patterns.iat[index, col_idx] += np.exp(-alpha)
         elif rating == -1:
             self.patterns.iat[index, col_idx] -= np.exp(-beta)
-    
+            
+    # TODO : faire en sorte de pouvoir faire du feedback pour les deux autres méthodes d'échantillonnage aussi
     # TwoStep Pattern Sampling (Boley et al., KDD'2011)
     def twostep_sampling(self, transactions: List[List[str]], k: int) -> List[List[str]]:
         """

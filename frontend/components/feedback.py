@@ -5,7 +5,7 @@ import requests
 Ceci n'est qu'un exemple de composant de feedback.
 """
 
-def feedback_component(pattern_id: int, backend_url: str, alpha: float = 0.3, beta: float = 0.3, key: int = 0):
+def feedback_component(pattern_id: int, backend_url: str, alpha: float = 0.3, beta: float = 0.3, key: int = 0, method: str = "Importance Sampling"):
     """Composant de feedback pour un motif"""
     rating_key = f"rating_{pattern_id}_{st.session_state.get('feedback_epoch', 0)}"
     if rating_key not in st.session_state:
@@ -22,7 +22,8 @@ def feedback_component(pattern_id: int, backend_url: str, alpha: float = 0.3, be
                         "index": int(pattern_id),
                         "rating": 1,
                         "alpha": float(alpha),
-                        "beta": float(beta)
+                        "beta": float(beta),
+                        "method": method
                     }
                     # backend attends des champs Form -> utiliser data=
                     response = requests.post(f"{backend_url}/api/feedback", data=payload, timeout=5)
@@ -43,7 +44,8 @@ def feedback_component(pattern_id: int, backend_url: str, alpha: float = 0.3, be
                         "index": int(pattern_id),
                         "rating": -1,
                         "alpha": float(alpha),
-                        "beta": float(beta)
+                        "beta": float(beta),
+                        "method": method
                     }
                     response = requests.post(f"{backend_url}/api/feedback", data=payload, timeout=5)
                     if response.status_code == 200:

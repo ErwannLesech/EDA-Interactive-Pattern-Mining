@@ -3,6 +3,14 @@ import requests
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from components.feedback import feedback_component
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 def sampling_component(backend_url: str, dataset_id: str):
     """
@@ -21,7 +29,19 @@ def sampling_component(backend_url: str, dataset_id: str):
         ["Importance Sampling", "TwoStep Sampling", "GDPS"],
         help="Choisissez la méthode d'échantillonnage à utiliser"
     )
-    
+    col1_b, col2_b = st.columns(2)
+    with col1_b:
+        alpha = st.slider(
+            "Poids du feedback positif (α)", 
+            0.001, 1.0, 0.03, 0.001,
+            help="Importance accordée au feedback positif dans le score composite"
+        )
+    with col2_b:
+        beta = st.slider(
+            "Poids du feedback négatif (β)", 
+            0.001, 1.0, 0.03, 0.001,
+            help="Importance accordée au feedback négatif dans le score composite"
+        )
     col1, col2 = st.columns(2)
     
     with col1:
@@ -43,7 +63,7 @@ def sampling_component(backend_url: str, dataset_id: str):
             )
         
         st.markdown("### Poids des critères")
-        col_a, col_b, col_c = st.columns(3)
+        col_a, col_b, col_c,col_d = st.columns(4)
         
         with col_a:
             support_weight = st.slider(
@@ -65,13 +85,8 @@ def sampling_component(backend_url: str, dataset_id: str):
                 0.0, 1.0, 0.34,
                 help="Importance de la diversité (pénalise les motifs similaires)"
             )
-        
-        # Normaliser les poids
-        total = support_weight + surprise_weight + redundancy_weight
-        if total > 0:
-            support_weight /= total
-            surprise_weight /= total
-            redundancy_weight /= total
+        with col_d:
+            min_support = st.slider("Support minimum", 0.01, 0.5, 0.05)
         
         params = {
             "support_weight": support_weight,
@@ -117,47 +132,107 @@ def sampling_component(backend_url: str, dataset_id: str):
             "max_norm": max_norm,
             "utility": utility
         }
-    
-    # Bouton pour lancer l'échantillonnage
-    if st.button("🚀 Lancer l'échantillonnage", type="primary", use_container_width=True):
-        with st.spinner(f"Échantillonnage en cours avec {method}..."):
-            try:
-                # Préparer les données
-                form_data = {
-                    "dataset_id": dataset_id,
-                    "k": k,
-                    **params
-                }
+    if method != "Importance Sampling":
+        # Bouton pour lancer l'échantillonnage
+        if st.button("🚀 Lancer l'échantillonnage", type="primary", use_container_width=True):
+            with st.spinner(f"Échantillonnage en cours avec {method}..."):
+                try:
+                    # Préparer les données
+                    form_data = {
+                        "dataset_id": dataset_id,
+                        "k": k,
+                        **params
+                    }
+                    
+                    if method == "TwoStep Sampling":
+                        endpoint = f"{backend_url}/api/sample/twostep"
+                    else:  # GDPS
+                        endpoint = f"{backend_url}/api/sample/gdps"
+                    
+                    response = requests.post(endpoint, data=form_data, timeout=30)
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        
+                        # Sauvegarder dans la session
+                        st.session_state['sampled_patterns'] = result
+                        st.session_state['sampling_method'] = method
+                        st.session_state["feedback_epoch"] = st.session_state.get("feedback_epoch", 0) + 1
+                        
+                        st.success(f"✅ {k} motifs échantillonnés avec succès !")
+                        
+                        
+                    else:
+                        st.error(f"❌ Erreur: {response.status_code} - {response.text}")
                 
-                # Appeler l'API appropriée
-                if method == "Importance Sampling":
-                    endpoint = f"{backend_url}/api/sample/importance"
-                elif method == "TwoStep Sampling":
-                    endpoint = f"{backend_url}/api/sample/twostep"
-                else:  # GDPS
-                    endpoint = f"{backend_url}/api/sample/gdps"
-                
-                response = requests.post(endpoint, data=form_data, timeout=30)
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    
-                    # Sauvegarder dans la session
-                    st.session_state['sampled_patterns'] = result
-                    st.session_state['sampling_method'] = method
-                    
-                    st.success(f"✅ {k} motifs échantillonnés avec succès !")
-                    
-                    # Afficher les résultats
-                    display_sampled_patterns(result, method)
-                    
+                except requests.exceptions.Timeout:
+                    st.error("⏱️ Timeout: L'échantillonnage prend trop de temps")
+                except Exception as e:
+                    st.error(f"❌ Erreur: {str(e)}")
+    else:
+        if "sampled_patterns" not in st.session_state:
+            st.session_state["sampled_patterns"] = pd.DataFrame()
+        if "extraction_done" not in st.session_state:
+            st.session_state["extraction_done"] = False
+        if not st.session_state["extraction_done"]:
+            if st.button("🚀 Lancer l'échantillonnage", type="primary", use_container_width=True):
+                if support_weight + surprise_weight + redundancy_weight != 1:
+                    st.error(f"❌ La somme des poids doit être égale à 1. Elle est égale à {support_weight + surprise_weight + redundancy_weight:.2f}. Ajustez les curseurs.")
                 else:
-                    st.error(f"❌ Erreur: {response.status_code} - {response.text}")
-            
-            except requests.exceptions.Timeout:
-                st.error("⏱️ Timeout: L'échantillonnage prend trop de temps")
-            except Exception as e:
-                st.error(f"❌ Erreur: {str(e)}")
+                    with st.spinner("Extraction en cours..."):
+                        response = requests.post(
+                        f"{backend_url}/api/patterns/mine",
+                        data={  # Utilise 'data' pour envoyer les paramètres en Form
+                            "min_support": min_support,
+                        "support_weight": support_weight,
+                        "surprise_weight": surprise_weight,
+                        "redundancy_weight": redundancy_weight,
+                        "k": k,
+                        "replacement":replacement
+                    },
+                    timeout=30
+                    )
+                    if response.status_code == 200:
+                        result = response.json()
+                        st.session_state["sampled_patterns"] = result
+                        # bump feedback epoch so feedback buttons reset for the new sample
+                        st.session_state["feedback_epoch"] = st.session_state.get("feedback_epoch", 0) + 1
+                        
+                        st.session_state['sampling_method'] = method
+                        st.session_state["extraction_done"] = True
+                        st.rerun()
+                    else:
+                        st.error("❌ Extraction impossible"+ f" (Statut {response.status_code})")
+        else:
+            if st.button("🔄 Relancer l'échantillonnage", type="primary", use_container_width=True):
+                if support_weight + surprise_weight + redundancy_weight != 1:
+                    st.error(f"❌ La somme des poids doit être égale à 1. Elle est égale à {support_weight + surprise_weight + redundancy_weight:.2f}. Ajustez les curseurs.")
+                else:
+                    with st.spinner("Extraction en cours..."):
+                        response = requests.post(
+                        f"{backend_url}/api/patterns/resample",
+                        data={  # Utilise 'data' pour envoyer les paramètres en Form
+                            "min_support": min_support,
+                        "support_weight": support_weight,
+                        "surprise_weight": surprise_weight,
+                        "redundancy_weight": redundancy_weight,
+                        "k": k,
+                        "replacement":replacement
+                    },
+                    timeout=30
+                    )
+                    if response.status_code == 200:
+                        result = response.json()
+                        
+                        st.session_state["sampled_patterns"] = result
+                        # bump feedback epoch so feedback buttons reset for the new resample
+                        st.session_state["feedback_epoch"] = st.session_state.get("feedback_epoch", 0) + 1
+                        
+                        st.session_state["extraction_done"] = True
+                        st.session_state['sampling_method'] = method
+                        st.rerun()
+                    else:
+                        st.error("❌ Extraction impossible"+ f" (Statut {response.status_code})")
     
     # Si des motifs ont déjà été échantillonnés, les afficher
     if 'sampled_patterns' in st.session_state:
@@ -166,6 +241,10 @@ def sampling_component(backend_url: str, dataset_id: str):
             st.session_state['sampled_patterns'], 
             st.session_state.get('sampling_method', method)
         )
+    st.markdown("---")
+    
+    # Composant de feedback
+    feedback_component_with_sampling(alpha, beta, backend_url, method=method)
 
 
 def display_sampled_patterns(result: dict, method: str):
@@ -293,39 +372,43 @@ def display_sampled_patterns(result: dict, method: str):
 
 
 
-def feedback_component_with_sampling():
+def feedback_component_with_sampling(alpha, beta, backend_url: str, method: str = "importance_sampling"):
     """Composant pour donner du feedback sur les motifs échantillonnés"""
     
     if 'sampled_patterns' not in st.session_state:
         st.info("👆 Échantillonnez d'abord des motifs pour donner du feedback")
         return
     
-    st.subheader("💬 Feedback sur les motifs")
-    
-    patterns = st.session_state['sampled_patterns'].get('sampled_patterns', [])
-    
+    st.subheader("Feedback sur les motifs échantillonnés")
+    n_cols = 5
+    patterns= st.session_state["sampled_patterns"].get("sampled_patterns", [])
     if not patterns:
+        st.info("Aucun motif échantillonné disponible pour le feedback.")
         return
-    
-    # Sélectionner un motif
-    pattern_index = st.selectbox(
-        "Sélectionnez un motif",
-        range(len(patterns)),
-        format_func=lambda x: f"Motif {x}: {patterns[x]}"
-    )
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("👍 J'aime", use_container_width=True):
-            st.success(f"✅ Feedback positif pour le motif {pattern_index}")
-            # TODO: Appeler l'API de feedback
-    
-    with col2:
-        if st.button("👎 Je n'aime pas", use_container_width=True):
-            st.warning(f"⚠️ Feedback négatif pour le motif {pattern_index}")
-            # TODO: Appeler l'API de feedback
-
+    else:
+        patterns = pd.DataFrame(patterns)
+    rows = [patterns.iloc[i:i+n_cols] for i in range(0, len(patterns), n_cols)]
+    logger.info(patterns.iloc[0])
+    # TODO : adapter a votre format de motifs
+    for row_group in rows:
+        cols = st.columns(len(row_group))
+        for col, (_, row) in zip(cols, row_group.iterrows()):
+            with col:
+                # Affiche l'itemset (formaté si besoin)
+                if isinstance(row['itemset'], (list, set, tuple)):
+                    itemset_str = ", ".join(map(str, row['itemset']))
+                else:
+                    itemset_str = str(row['itemset'])
+                st.markdown(f"**{itemset_str}**")
+                # Boutons de feedback
+                feedback_component(
+                    pattern_id=row.get("index", row.name),
+                    backend_url=backend_url,
+                    alpha=alpha,
+                    beta=beta,
+                    key= row.get("id", row.name),
+                    method=method
+                )
 
 # Fonction principale pour l'onglet d'échantillonnage
 def sampling_tab(backend_url: str, dataset_id: str):
@@ -339,7 +422,3 @@ def sampling_tab(backend_url: str, dataset_id: str):
     # Composant d'échantillonnage
     sampling_component(backend_url, dataset_id)
     
-    st.markdown("---")
-    
-    # Composant de feedback
-    feedback_component_with_sampling()

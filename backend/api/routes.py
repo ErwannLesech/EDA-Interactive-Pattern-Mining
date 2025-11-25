@@ -377,16 +377,32 @@ async def mine_patterns(
             replacement=replacement
         )
         indexes=[i for _, i in sampled_pattern]
+        sampled_patterns = []
+        # PatternSampler.importance_sampling returns (itemset, index)
+        for itemset, idx in sampled_pattern:
+            sampled_patterns.append({
+                "index": int(idx),
+                "itemset": list(itemset),
+                "support": float(frequent_itemsets.iloc[idx]["support"]),
+                "length": len(itemset),
+                "surprise": float(frequent_itemsets.iloc[idx].get("surprise", 0)),
+                "redundancy": float(frequent_itemsets.iloc[idx].get("redundancy", 0)),
+                "composite_score": float(frequent_itemsets.iloc[idx].get("composite_score", 0))
+            })
         return jsonable_encoder({
             "frequent_itemsets": pattern_sampler.patterns.iloc[indexes].to_dict(orient="records"),
-            "sampled_patterns": [
-                {
-                    "itemset": list(itemset),
-                    "index": int(index)
-                } for itemset, index in sampled_pattern
-            ],
-            "message": f"Extraction réussie: {len(frequent_itemsets)} motifs fréquents extraits, "
-                    f"{len(sampled_pattern)} motifs échantillonnés."
+            "sampled_patterns": sampled_patterns,
+            "message": f"Rééchantillonnage réussi: {len(sampled_pattern)} motifs échantillonnés.",
+            "method": "importance_sampling",
+            "k": min(k, len(sampled_pattern)),
+            "total_patterns": len(frequent_itemsets),
+            "parameters": {
+                "support_weight": support_weight,
+                "surprise_weight": surprise_weight,
+                "redundancy_weight": redundancy_weight,
+                "replacement": replacement,
+                "min_support": min_support,
+            }
         })
         
     except HTTPException:
@@ -414,17 +430,34 @@ async def resample_patterns(
             k=k,
             replacement=replacement
         )
+        frequent_itemsets=pattern_sampler.patterns
         indexes=[i for _, i in sampled_pattern]
+        sampled_patterns = []
+        # PatternSampler.importance_sampling returns (itemset, index)
+        for itemset, idx in sampled_pattern:
+            sampled_patterns.append({
+                "index": int(idx),
+                "itemset": list(itemset),
+                "support": float(frequent_itemsets.iloc[idx]["support"]),
+                "length": len(itemset),
+                "surprise": float(frequent_itemsets.iloc[idx].get("surprise", 0)),
+                "redundancy": float(frequent_itemsets.iloc[idx].get("redundancy", 0)),
+                "composite_score": float(frequent_itemsets.iloc[idx].get("composite_score", 0))
+            })
         return jsonable_encoder({
             "frequent_itemsets": pattern_sampler.patterns.iloc[indexes].to_dict(orient="records"),
-            "sampled_patterns": [
-                {
-                    "itemset": list(itemset),
-                    "index": int(index)
-                } for itemset, index in sampled_pattern
-            ],
-            "message": f"Rééchantillonnage réussi: {len(sampled_pattern)} motifs échantillonnés."
-        })
+            "sampled_patterns": sampled_patterns,
+            "message": f"Rééchantillonnage réussi: {len(sampled_pattern)} motifs échantillonnés.",
+            "method": "importance_sampling",
+            "k": min(k, len(sampled_pattern)),
+            "total_patterns": len(frequent_itemsets),
+            "parameters": {
+                "support_weight": support_weight,
+                "surprise_weight": surprise_weight,
+                "redundancy_weight": redundancy_weight,
+                "replacement": replacement,
+            }}
+        )
         
     except HTTPException:
         raise
@@ -441,16 +474,24 @@ async def provide_pattern_feedback(
     index: int = Form(...),
     alpha: float = Form(0.5),
     beta: float = Form(0.3),
-    rating: int = Form(0)
+    rating: int = Form(0),
+    method: str = Form("Importance Sampling")
 ):
     """Prend en compte le feedback utilisateur pour ajuster les scores des motifs"""
-    logger.info(f"Réception du feedback pour le motif index {index} avec rating {rating}")
+    logger.info(f"Réception du feedback pour le motif index {index} avec rating {rating} et méthode {method}")
     try:
-        pattern_sampler.user_feedback(index, alpha, beta, rating)
-        
-        return {
-            "message": f"Feedback reçu pour le motif index {index} avec rating {rating}."
-        }
+        if method != "Importance Sampling":
+            # TODO implémenter le feedback pour les autres méthodes
+            raise HTTPException(
+                status_code=400,
+                detail=f"Feedback non implémenté pour la méthode : {method}"
+            )
+        else:
+            pattern_sampler.user_feedback(index, alpha, beta, rating)
+            
+            return {
+                "message": f"Feedback reçu pour le motif index {index} avec rating {rating}."
+            }
         
     except HTTPException:
         raise
