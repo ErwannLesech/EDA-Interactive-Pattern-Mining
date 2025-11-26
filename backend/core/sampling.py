@@ -143,7 +143,7 @@ class PatternSampler:
     def importance_sampling(self,support_weight: float, surprise_weight: float, redundancy_weight: float, k: int, replacement: bool) -> List[Tuple[FrozenSet[str], int]]:
         logger.info("Démarrage de l'échantillonnage des motifs avec importance sampling")
         logger.info(f"Support weight: {support_weight}, Surprise weight: {surprise_weight}, replacement: {replacement}")
-        if not 'composite_score' in self.patterns:
+        if 'composite_score' not in self.patterns:
             self.composite_scoring(support_weight,surprise_weight,redundancy_weight)
         
         # Ensure non-negative scores
@@ -151,18 +151,21 @@ class PatternSampler:
         
         # Normalize probabilities
         total_score = np.sum(self.patterns["composite_score"])
+        n = len(self.patterns)
+        composite_scores=[1.0/n] * n
         if total_score > 0:
-            self.patterns["composite_score"] = self.patterns["composite_score"] / total_score
-        else:
-            # Fallback to uniform distribution if all scores are 0
-            n = len(self.patterns)
-            self.patterns["composite_score"] = [1.0/n] * n
+            composite_scores = self.patterns["composite_score"] / total_score
+        
             
-        indexes = np.random.choice(range(len(self.patterns)),size=min(k, len(self.patterns)) if not replacement else k, replace=replacement, p=self.patterns["composite_score"])
+        indexes = np.random.choice(range(len(self.patterns)),size=min(k, len(self.patterns)) if not replacement else k, replace=replacement, p=composite_scores)
         result: List[Tuple[FrozenSet[str], int]] = [(self.patterns.iloc[i]['itemsets'], i) for i in indexes]
         return result
     
     def user_feedback(self, index : int, alpha: float, beta: float, rating: int):
+        """Met à jour les scores des motifs en fonction du feedback utilisateur"""
+        # Ajuster alpha et beta dans [2.0, 5.0] pour éviter des ajustements trop importants
+        alpha = 2.0 + 3.0 * (1 - alpha)
+        beta = 2.0 + 3.0 * (1 - beta)
         # Enregistrer le feedback pour l'évaluation
         self.feedback_history.append({
             "pattern_id": index,
@@ -176,171 +179,11 @@ class PatternSampler:
         
         # Mise à jour du score dans le DataFrame actuel
         col_idx : int = self.patterns.columns.get_loc('composite_score') # type: ignore[assignment]
-        
-        # Récupérer l'itemset pour la persistance
-        try:
-            # Gérer le cas où 'itemset' est une liste (TwoStep/GDPS) ou un frozenset (Importance)
-            itemset_val = self.patterns.iloc[index]['itemset'] if 'itemset' in self.patterns.columns else self.patterns.iloc[index]['itemsets']
-            if isinstance(itemset_val, list):
-                itemset_key = frozenset(itemset_val)
-            else:
-                itemset_key = itemset_val
-        except Exception as e:
-            logger.warning(f"Impossible de récupérer l'itemset pour l'index {index}: {e}")
-            itemset_key = None
-
+        logger.info(f"score avant {self.patterns.iat[index, col_idx]}")
         if rating == 1:
             adjustment = np.exp(-alpha)
             self.patterns.iat[index, col_idx] += adjustment
-            if itemset_key:
-                self.pattern_scores[itemset_key] = self.pattern_scores.get(itemset_key, 0.5) + adjustment
         elif rating == -1:
             adjustment = np.exp(-beta)
             self.patterns.iat[index, col_idx] -= adjustment
-            if itemset_key:
-                self.pattern_scores[itemset_key] = self.pattern_scores.get(itemset_key, 0.5) - adjustment
-            
-    # TODO : faire en sorte de pouvoir faire du feedback pour les deux autres méthodes d'échantillonnage aussi
-    # TwoStep Pattern Sampling (Boley et al., KDD'2011)
-    def twostep_sampling(self, transactions: List[List[str]], k: int) -> List[List[str]]:
-        """
-        TwoStep pattern sampling: échantillonne k motifs depuis transactions.
-        
-        Args:
-            transactions: Liste de transactions (chaque transaction = liste d'items)
-            k: Nombre de motifs à échantillonner
-            
-        Returns:
-            Liste de motifs échantillonnés
-        """
-        from decimal import Decimal
-        
-        # Étape 1: Calculer les poids cumulatifs pour chaque transaction
-        weights = []
-        cumulative_weight = Decimal(0)
-        
-        for transaction in transactions:
-            weight = 2 ** len(transaction)
-            cumulative_weight += Decimal(weight)
-            weights.append(cumulative_weight)
-        
-        Z = weights[-1] if weights else Decimal(1)
-        sampled_patterns = []
-        
-        # Étape 2: Échantillonner k motifs
-        for _ in range(k):
-            # Sélectionner une transaction aléatoirement (pondérée)
-            rand_value = Decimal(random.random()) * Z
-            
-            # Recherche binaire pour trouver la transaction
-            left, right = 0, len(weights)
-            while left < right:
-                mid = (left + right) // 2
-                if weights[mid] < rand_value:
-                    left = mid + 1
-                else:
-                    right = mid
-            
-            t_id = min(left, len(transactions) - 1)
-            selected_transaction = transactions[t_id]
-            
-            # Échantillonner un sous-ensemble de la transaction
-            pattern = [item for item in selected_transaction if random.random() > 0.5]
-            sampled_patterns.append(pattern if pattern else [selected_transaction[0]] if selected_transaction else [])
-        
-        return sampled_patterns
-    
-    # GDPS (Generic Direct Pattern Sampling)
-    def gdps_sampling(self, transactions: List[List[str]], k: int, 
-                     min_norm: int = 1, max_norm: int = 10, 
-                     utility: str = "freq") -> List[List[str]]:
-        """
-        Generic Direct Pattern Sampling avec différentes utilités.
-        
-        Args:
-            transactions: Liste de transactions
-            k: Nombre de motifs à échantillonner
-            min_norm: Taille minimale des motifs
-            max_norm: Taille maximale des motifs
-            utility: Type d'utilité ("freq", "area", "decay")
-            
-        Returns:
-            Liste de motifs échantillonnés
-        """
-        from decimal import Decimal
-        import math
-        
-        def compute_utility(norm: int, utility_type: str) -> float:
-            """Calcule l'utilité selon le type"""
-            if utility_type == "freq":
-                return 1.0
-            elif utility_type == "area":
-                return float(norm)
-            elif utility_type == "decay":
-                return math.exp(-norm)
-            return 1.0
-        
-        # Calculer les poids pour chaque transaction
-        weights = []
-        cumulative_weight = Decimal(0)
-        
-        for transaction in transactions:
-            t_size = len(transaction)
-            weight = Decimal(0)
-            
-            # Sommer les utilités pour toutes les tailles possibles
-            for l in range(min_norm, min(max_norm + 1, t_size + 1)):
-                from math import comb
-                n_patterns = comb(t_size, l)
-                util = compute_utility(l, utility)
-                weight += Decimal(n_patterns * util)
-            
-            cumulative_weight += weight
-            weights.append(cumulative_weight)
-        
-        Z = weights[-1] if weights else Decimal(1)
-        sampled_patterns = []
-        
-        # Échantillonner k motifs
-        for _ in range(k):
-            # Sélectionner une transaction
-            rand_value = Decimal(random.random()) * Z
-            
-            left, right = 0, len(weights)
-            while left < right:
-                mid = (left + right) // 2
-                if weights[mid] < rand_value:
-                    left = mid + 1
-                else:
-                    right = mid
-            
-            t_id = min(left, len(transactions) - 1)
-            transaction = transactions[t_id]
-            t_size = len(transaction)
-            
-            # Déterminer la taille du motif selon l'utilité
-            norm_probs = []
-            for l in range(min_norm, min(max_norm + 1, t_size + 1)):
-                from math import comb
-                n_patterns = comb(t_size, l)
-                util = compute_utility(l, utility)
-                norm_probs.append(n_patterns * util)
-            
-            # Normaliser les probabilités
-            total = sum(norm_probs)
-            if total > 0:
-                norm_probs = [p / total for p in norm_probs]
-            else:
-                norm_probs = [1.0 / len(norm_probs)] * len(norm_probs)
-            
-            # Choisir une taille
-            chosen_norm = np.random.choice(
-                range(min_norm, min(max_norm + 1, t_size + 1)),
-                p=norm_probs
-            )
-            
-            # Échantillonner un motif de cette taille
-            pattern = random.sample(transaction, min(chosen_norm, len(transaction)))
-            sampled_patterns.append(pattern)
-        
-        return sampled_patterns
+        logger.info(f"Score apres {self.patterns.iat[index, col_idx]}")
