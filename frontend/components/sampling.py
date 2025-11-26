@@ -58,7 +58,7 @@ def sampling_component(backend_url: str, dataset_id: str):
         col1, col2 = st.columns(2)
         with col1:
             k_init = st.number_input(
-            "Nombre de motifs pour l'extraction initiale (k)", 
+            "Nombre de motifs pour l'extraction initiale (k_init)", 
             min_value=10, 
             max_value=1000, 
             value=50,
