@@ -32,12 +32,12 @@ def sampling_component(backend_url: str, dataset_id: str):
     else:
         method = st.selectbox(
             "Méthode d'échantillonnage",
-            ["FP-Growth", "TwoStep Sampling"],
+            ["PrefixSpan", "TwoStep Sampling"],
             help="Choisissez la méthode d'échantillonnage à utiliser"
         )
     # Paramètres spécifiques à chaque méthode
-    if method == "FP-Growth":
-        st.info("🔹 FP-Growth : Échantillonne des motifs fréquents basés sur le support")
+    if method == "FP-Growth" or method == "PrefixSpan":
+        st.info(f"🔹 {method} : Échantillonne des motifs fréquents basés sur le support")
 
         min_support = st.slider("Support minimum", 0.01, 0.5, 0.05)
         methods_params = {
