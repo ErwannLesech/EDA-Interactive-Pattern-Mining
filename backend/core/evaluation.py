@@ -66,7 +66,12 @@ class PatternEvaluator:
                 "average_pattern_length": 0.0
             }
         
-        itemsets = patterns_df['itemsets'].tolist()
+        # Handle both 'itemset' (list) and 'itemsets' (frozenset) column names
+        if 'itemset' in patterns_df.columns:
+            itemsets = [frozenset(x) for x in patterns_df['itemset'].tolist()]
+        else:
+            itemsets = patterns_df['itemsets'].tolist()
+            
         n = len(itemsets)
         
         # Calculer les distances de Jaccard
@@ -127,11 +132,23 @@ class PatternEvaluator:
         
         # Couverture des items
         sampled_items = set()
-        for itemset in patterns_df['itemsets'].tolist():
+        # Handle both 'itemset' (list) and 'itemsets' (frozenset) column names
+        if 'itemset' in patterns_df.columns:
+            sampled_itemsets = [frozenset(x) for x in patterns_df['itemset'].tolist()]
+        else:
+            sampled_itemsets = patterns_df['itemsets'].tolist()
+            
+        for itemset in sampled_itemsets:
             sampled_items.update(itemset)
         
         all_items = set()
-        for itemset in all_patterns_df['itemsets'].tolist():
+        # Handle both 'itemset' (list) and 'itemsets' (frozenset) column names for all_patterns_df
+        if 'itemset' in all_patterns_df.columns:
+            all_itemsets = [frozenset(x) for x in all_patterns_df['itemset'].tolist()]
+        else:
+            all_itemsets = all_patterns_df['itemsets'].tolist()
+            
+        for itemset in all_itemsets:
             all_items.update(itemset)
         
         item_coverage = len(sampled_items) / len(all_items) if len(all_items) > 0 else 0.0

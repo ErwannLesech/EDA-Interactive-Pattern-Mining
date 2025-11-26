@@ -480,18 +480,14 @@ async def provide_pattern_feedback(
     """Prend en compte le feedback utilisateur pour ajuster les scores des motifs"""
     logger.info(f"Réception du feedback pour le motif index {index} avec rating {rating} et méthode {method}")
     try:
-        if method != "Importance Sampling":
-            # TODO implémenter le feedback pour les autres méthodes
-            raise HTTPException(
-                status_code=400,
-                detail=f"Feedback non implémenté pour la méthode : {method}"
-            )
-        else:
-            pattern_sampler.user_feedback(index, alpha, beta, rating)
+        # Appliquer le feedback pour toutes les méthodes car nous maintenons maintenant
+        # les patterns échantillonnés dans pattern_sampler.patterns
+        pattern_sampler.user_feedback(index, alpha, beta, rating)
+        msg = f"Feedback appliqué pour le motif index {index} ({method})."
             
-            return {
-                "message": f"Feedback reçu pour le motif index {index} avec rating {rating}."
-            }
+        return {
+            "message": msg
+        }
         
     except HTTPException:
         raise
@@ -687,8 +683,8 @@ async def sample_patterns_twostep(
         k: Nombre de motifs à échantillonner
     """
     try:
-        from core.sampling import PatternSampler
         from utils.data_processing import convert_to_transactions
+        import math
         
         # Récupérer le dataset
         df = DatasetStorage.load_dataset(dataset_id)
@@ -698,14 +694,55 @@ async def sample_patterns_twostep(
         # Convertir en transactions (liste de listes)
         transactions = convert_to_transactions(df)
         
-        # Créer le sampler et échantillonner
-        sampler = PatternSampler(pd.DataFrame())  # Patterns vide pour TwoStep
-        sampled = sampler.twostep_sampling(transactions, k)
+        # Utiliser le sampler global
+        sampled = pattern_sampler.twostep_sampling(transactions, k)
+        
+        # Deduplicate sampled patterns while preserving order
+        unique_sampled = []
+        seen_itemsets = set()
+        for itemset in sampled:
+            # Convert to frozenset for hashability
+            itemset_frozen = frozenset(itemset)
+            if itemset_frozen not in seen_itemsets:
+                seen_itemsets.add(itemset_frozen)
+                unique_sampled.append(itemset)
+        
+        # Calculer les métriques pour les motifs échantillonnés
+        sampled_patterns = []
+        n_transactions = len(transactions)
+        transaction_sets = [set(t) for t in transactions]
+        
+        for idx, itemset_list in enumerate(unique_sampled):
+            itemset_set = set(itemset_list)
+            itemset_frozen = frozenset(itemset_list)
+            
+            # Calculer le support
+            count = sum(1 for t in transaction_sets if itemset_set.issubset(t))
+            support = count / n_transactions if n_transactions > 0 else 0
+            
+            # Calculer la surprise
+            surprise = -math.log2(support) if support > 0 else 0
+            
+            # Récupérer le score persistant s'il existe
+            score = pattern_sampler.pattern_scores.get(itemset_frozen, 0.5)
+            
+            sampled_patterns.append({
+                "index": idx,
+                "itemset": itemset_list,
+                "support": support,
+                "length": len(itemset_list),
+                "surprise": surprise,
+                "redundancy": 0.0,
+                "composite_score": score
+            })
+            
+        # Mettre à jour les patterns du sampler global pour permettre le feedback
+        pattern_sampler.patterns = pd.DataFrame(sampled_patterns)
         
         return {
             "method": "twostep_sampling",
             "k": k,
-            "sampled_patterns": sampled
+            "sampled_patterns": sampled_patterns
         }
         
     except Exception as e:
@@ -732,8 +769,8 @@ async def sample_patterns_gdps(
         utility: Type d'utilité (freq, area, decay)
     """
     try:
-        from core.sampling import PatternSampler
         from utils.data_processing import convert_to_transactions
+        import math
         
         # Récupérer le dataset
         df = DatasetStorage.load_dataset(dataset_id)
@@ -743,14 +780,55 @@ async def sample_patterns_gdps(
         # Convertir en transactions
         transactions = convert_to_transactions(df)
         
-        # Créer le sampler et échantillonner
-        sampler = PatternSampler(pd.DataFrame())
-        sampled = sampler.gdps_sampling(transactions, k, min_norm, max_norm, utility)
+        # Utiliser le sampler global
+        sampled = pattern_sampler.gdps_sampling(transactions, k, min_norm, max_norm, utility)
+        
+        # Deduplicate sampled patterns while preserving order
+        unique_sampled = []
+        seen_itemsets = set()
+        for itemset in sampled:
+            # Convert to frozenset for hashability
+            itemset_frozen = frozenset(itemset)
+            if itemset_frozen not in seen_itemsets:
+                seen_itemsets.add(itemset_frozen)
+                unique_sampled.append(itemset)
+        
+        # Calculer les métriques pour les motifs échantillonnés
+        sampled_patterns = []
+        n_transactions = len(transactions)
+        transaction_sets = [set(t) for t in transactions]
+        
+        for idx, itemset_list in enumerate(unique_sampled):
+            itemset_set = set(itemset_list)
+            itemset_frozen = frozenset(itemset_list)
+            
+            # Calculer le support
+            count = sum(1 for t in transaction_sets if itemset_set.issubset(t))
+            support = count / n_transactions if n_transactions > 0 else 0
+            
+            # Calculer la surprise
+            surprise = -math.log2(support) if support > 0 else 0
+            
+            # Récupérer le score persistant s'il existe
+            score = pattern_sampler.pattern_scores.get(itemset_frozen, 0.5)
+            
+            sampled_patterns.append({
+                "index": idx,
+                "itemset": itemset_list,
+                "support": support,
+                "length": len(itemset_list),
+                "surprise": surprise,
+                "redundancy": 0.0,
+                "composite_score": score
+            })
+            
+        # Mettre à jour les patterns du sampler global pour permettre le feedback
+        pattern_sampler.patterns = pd.DataFrame(sampled_patterns)
         
         return {
             "method": "gdps_sampling",
             "k": k,
-            "sampled_patterns": sampled,
+            "sampled_patterns": sampled_patterns,
             "parameters": {
                 "min_norm": min_norm,
                 "max_norm": max_norm,

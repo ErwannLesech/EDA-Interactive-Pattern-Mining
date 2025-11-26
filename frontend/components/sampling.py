@@ -158,6 +158,7 @@ def sampling_component(backend_url: str, dataset_id: str):
                         st.session_state['sampled_patterns'] = result
                         st.session_state['sampling_method'] = method
                         st.session_state["feedback_epoch"] = st.session_state.get("feedback_epoch", 0) + 1
+                        st.session_state["extraction_done"] = True
                         
                         st.success(f"✅ {k} motifs échantillonnés avec succès !")
                         

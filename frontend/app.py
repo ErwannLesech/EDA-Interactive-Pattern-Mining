@@ -40,7 +40,7 @@ with tab3:
     
     if not st.session_state.get('extraction_done'):
         st.warning("⚠️ Aucune extraction effectuée")
-        st.info("👉 Allez dans l'onglet 'Motifs' pour lancer l'extraction avant d'évaluer")
+        st.info("👉 Allez dans l'onglet 'Échantillonnage' pour lancer l'extraction avant d'évaluer")
     else:
         from components.evaluation import display_evaluation_metrics, display_evaluation_summary
         

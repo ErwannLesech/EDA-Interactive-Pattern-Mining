@@ -16,6 +16,7 @@ class PatternSampler:
     def __init__(self, patterns: pd.DataFrame):
         self.patterns = patterns
         self.feedback_history = []  # Historique des feedbacks pour évaluation
+        self.pattern_scores = {} # Dictionnaire persistant pour stocker les scores des motifs (frozenset -> score)
         random.seed(42)
         np.random.seed(42)
 
@@ -144,7 +145,19 @@ class PatternSampler:
         logger.info(f"Support weight: {support_weight}, Surprise weight: {surprise_weight}, replacement: {replacement}")
         if not 'composite_score' in self.patterns:
             self.composite_scoring(support_weight,surprise_weight,redundancy_weight)
-        self.patterns["composite_score"]=self.patterns["composite_score"]/np.sum(self.patterns["composite_score"])
+        
+        # Ensure non-negative scores
+        self.patterns["composite_score"] = self.patterns["composite_score"].apply(lambda x: max(0.0, x))
+        
+        # Normalize probabilities
+        total_score = np.sum(self.patterns["composite_score"])
+        if total_score > 0:
+            self.patterns["composite_score"] = self.patterns["composite_score"] / total_score
+        else:
+            # Fallback to uniform distribution if all scores are 0
+            n = len(self.patterns)
+            self.patterns["composite_score"] = [1.0/n] * n
+            
         indexes = np.random.choice(range(len(self.patterns)),size=min(k, len(self.patterns)) if not replacement else k, replace=replacement, p=self.patterns["composite_score"])
         result: List[Tuple[FrozenSet[str], int]] = [(self.patterns.iloc[i]['itemsets'], i) for i in indexes]
         return result
@@ -160,11 +173,32 @@ class PatternSampler:
         })
         
         logger.info(f"Réception du feedback utilisateur pour le motif index {index} avec rating {rating}")
+        
+        # Mise à jour du score dans le DataFrame actuel
         col_idx : int = self.patterns.columns.get_loc('composite_score') # type: ignore[assignment]
+        
+        # Récupérer l'itemset pour la persistance
+        try:
+            # Gérer le cas où 'itemset' est une liste (TwoStep/GDPS) ou un frozenset (Importance)
+            itemset_val = self.patterns.iloc[index]['itemset'] if 'itemset' in self.patterns.columns else self.patterns.iloc[index]['itemsets']
+            if isinstance(itemset_val, list):
+                itemset_key = frozenset(itemset_val)
+            else:
+                itemset_key = itemset_val
+        except Exception as e:
+            logger.warning(f"Impossible de récupérer l'itemset pour l'index {index}: {e}")
+            itemset_key = None
+
         if rating == 1:
-            self.patterns.iat[index, col_idx] += np.exp(-alpha)
+            adjustment = np.exp(-alpha)
+            self.patterns.iat[index, col_idx] += adjustment
+            if itemset_key:
+                self.pattern_scores[itemset_key] = self.pattern_scores.get(itemset_key, 0.5) + adjustment
         elif rating == -1:
-            self.patterns.iat[index, col_idx] -= np.exp(-beta)
+            adjustment = np.exp(-beta)
+            self.patterns.iat[index, col_idx] -= adjustment
+            if itemset_key:
+                self.pattern_scores[itemset_key] = self.pattern_scores.get(itemset_key, 0.5) - adjustment
             
     # TODO : faire en sorte de pouvoir faire du feedback pour les deux autres méthodes d'échantillonnage aussi
     # TwoStep Pattern Sampling (Boley et al., KDD'2011)
