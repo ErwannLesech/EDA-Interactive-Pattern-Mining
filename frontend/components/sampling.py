@@ -46,7 +46,7 @@ def sampling_component(backend_url: str, dataset_id: str):
     elif method == "TwoStep Sampling":
         st.info("🔹 TwoStep : Échantillonne une transaction puis un sous-ensemble de cette transaction")
         k_init = st.number_input(
-            "Nombre de motifs pour l'extraction initiale (k)", 
+            "Nombre de motifs pour l'extraction initiale (k_init)", 
             min_value=10, 
             max_value=1000, 
             value=50,
