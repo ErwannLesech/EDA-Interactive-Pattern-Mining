@@ -14,7 +14,8 @@ class PatternSampler:
     """Classe pour l'échantillonnage et l'analyse de motifs"""
 
     def __init__(self, patterns: pd.DataFrame):
-        self.patterns = patterns
+        self.mined_patterns = patterns.copy() if not patterns.empty else pd.DataFrame() # Pool complet des motifs minés
+        self.patterns = patterns # Motifs actuellement affichés/échantillonnés
         self.feedback_history = []  # Historique des feedbacks pour évaluation
         self.pattern_scores = {} # Dictionnaire persistant pour stocker les scores des motifs (frozenset -> score)
         random.seed(42)
@@ -75,21 +76,24 @@ class PatternSampler:
 
     def add_surprise_and_redundancy_to_patterns(self):
         """
-        Ajoute les colonnes 'surprise' et 'redundancy' au DataFrame des motifs, optimisé pour gros datasets.
+        Ajoute les colonnes 'surprise' et 'redundancy' au DataFrame des motifs minés (self.mined_patterns), optimisé pour gros datasets.
         """
+        if self.mined_patterns.empty:
+            return
+
         # Pré-calcule le support individuel pour tous les items (itemsets de taille 1)
         single_item_support = {
             tuple(row["itemsets"])[0]: row["support"]
-            for _, row in self.patterns.iterrows()
+            for _, row in self.mined_patterns.iterrows()
             if len(row["itemsets"]) == 1
         }
 
-        all_itemsets = self.patterns["itemsets"].tolist()
+        all_itemsets = self.mined_patterns["itemsets"].tolist()
         n = len(all_itemsets)
 
         # Surprise : vectorisé
         surprise_scores = np.zeros(n)
-        for i, row in enumerate(self.patterns.itertuples(index=False)):
+        for i, row in enumerate(self.mined_patterns.itertuples(index=False)):
             itemset = row.itemsets
             observed_support = float(row.support)
             expected_support = 1.0
@@ -122,44 +126,70 @@ class PatternSampler:
             minv, maxv = arr.min(), arr.max()
             return (arr - minv) / (maxv - minv) if maxv > minv else arr
 
-        self.patterns["surprise"] = normalize(surprise_scores)
-        self.patterns["redundancy"] = normalize(redundancy_scores)
+        self.mined_patterns["surprise"] = normalize(surprise_scores)
+        self.mined_patterns["redundancy"] = normalize(redundancy_scores)
 
     def composite_scoring(self, support_weight: float, surprise_weight: float, redundancy_weight: float):
         """
-        Calcule un score composite basé sur support, surprise et redondance.
+        Calcule un score composite basé sur support, surprise et redondance pour le pool miné.
         
         Score = w1 * support + w2 * surprise_norm + w3 * (1 - redundancy_norm)
         """
+        if self.mined_patterns.empty:
+            return
+
         self.add_surprise_and_redundancy_to_patterns()
 
         composite_scores = (
-            support_weight * np.array(self.patterns["support"].tolist())
-            + surprise_weight * np.array(self.patterns['surprise'].tolist())
-            + redundancy_weight * (1 - np.array(self.patterns['redundancy'].tolist()))
+            support_weight * np.array(self.mined_patterns["support"].tolist())
+            + surprise_weight * np.array(self.mined_patterns['surprise'].tolist())
+            + redundancy_weight * (1 - np.array(self.mined_patterns['redundancy'].tolist()))
         )
-        self.patterns["composite_score"] = composite_scores.tolist()
+        self.mined_patterns["composite_score"] = composite_scores.tolist()
     
     def importance_sampling(self,support_weight: float, surprise_weight: float, redundancy_weight: float, k: int, replacement: bool) -> List[Tuple[FrozenSet[str], int]]:
         logger.info("Démarrage de l'échantillonnage des motifs avec importance sampling")
         logger.info(f"Support weight: {support_weight}, Surprise weight: {surprise_weight}, replacement: {replacement}")
-        if not 'composite_score' in self.patterns:
+        
+        if self.mined_patterns.empty:
+            logger.error("Tentative d'importance sampling sur un pool vide")
+            return []
+
+        if not 'composite_score' in self.mined_patterns:
             self.composite_scoring(support_weight,surprise_weight,redundancy_weight)
         
         # Ensure non-negative scores
-        self.patterns["composite_score"] = self.patterns["composite_score"].apply(lambda x: max(0.0, x))
+        self.mined_patterns["composite_score"] = self.mined_patterns["composite_score"].apply(lambda x: max(0.0, x))
         
+        # Appliquer les scores persistants (feedback) au pool miné
+        for idx, row in self.mined_patterns.iterrows():
+            itemset = row['itemsets']
+            if itemset in self.pattern_scores:
+                # On combine le score calculé avec le score persistant
+                # Par exemple, on multiplie par le score persistant (qui est autour de 0.5 par défaut)
+                # Ou on remplace ? Ici on va ajuster le score composite
+                # Si score > 0.5 (aimé), on booste. Si < 0.5 (détesté), on réduit.
+                feedback_modifier = max(0.0, self.pattern_scores[itemset]) * 2 # 0.5 -> 1.0 (neutre), 1.0 -> 2.0 (boost), 0.0 -> 0.0 (kill)
+                self.mined_patterns.at[idx, "composite_score"] *= feedback_modifier
+
+        # Ensure non-negative scores (safety check)
+        self.mined_patterns["composite_score"] = self.mined_patterns["composite_score"].apply(lambda x: max(0.0, x))
+
         # Normalize probabilities
-        total_score = np.sum(self.patterns["composite_score"])
+        total_score = np.sum(self.mined_patterns["composite_score"])
         if total_score > 0:
-            self.patterns["composite_score"] = self.patterns["composite_score"] / total_score
+            self.mined_patterns["composite_score"] = self.mined_patterns["composite_score"] / total_score
         else:
             # Fallback to uniform distribution if all scores are 0
-            n = len(self.patterns)
-            self.patterns["composite_score"] = [1.0/n] * n
+            n = len(self.mined_patterns)
+            self.mined_patterns["composite_score"] = [1.0/n] * n
             
-        indexes = np.random.choice(range(len(self.patterns)),size=min(k, len(self.patterns)) if not replacement else k, replace=replacement, p=self.patterns["composite_score"])
-        result: List[Tuple[FrozenSet[str], int]] = [(self.patterns.iloc[i]['itemsets'], i) for i in indexes]
+        indexes = np.random.choice(range(len(self.mined_patterns)),size=min(k, len(self.mined_patterns)) if not replacement else k, replace=replacement, p=self.mined_patterns["composite_score"])
+        
+        # Mettre à jour self.patterns avec les motifs échantillonnés pour l'affichage et le feedback futur
+        self.patterns = self.mined_patterns.iloc[indexes].copy().reset_index(drop=True)
+        
+        result: List[Tuple[FrozenSet[str], int]] = [(self.patterns.iloc[i]['itemsets'], i) for i in range(len(self.patterns))]
         return result
     
     def user_feedback(self, index : int, alpha: float, beta: float, rating: int):
@@ -174,7 +204,8 @@ class PatternSampler:
         
         logger.info(f"Réception du feedback utilisateur pour le motif index {index} avec rating {rating}")
         
-        # Mise à jour du score dans le DataFrame actuel
+        # Mise à jour du score dans le DataFrame actuel (self.patterns)
+        # Note: self.patterns peut contenir 'itemset' (list) ou 'itemsets' (frozenset)
         col_idx : int = self.patterns.columns.get_loc('composite_score') # type: ignore[assignment]
         
         # Récupérer l'itemset pour la persistance
@@ -199,12 +230,24 @@ class PatternSampler:
             self.patterns.iat[index, col_idx] -= adjustment
             if itemset_key:
                 self.pattern_scores[itemset_key] = self.pattern_scores.get(itemset_key, 0.5) - adjustment
+        
+        # Si le motif existe dans le pool miné (self.mined_patterns), mettre à jour son score là aussi
+        # pour influencer le futur Importance Sampling
+        if itemset_key and not self.mined_patterns.empty:
+            # Trouver l'index dans mined_patterns
+            # C'est un peu lent si le pool est grand, mais nécessaire
+            # On suppose que 'itemsets' est la colonne clé
+            mask = self.mined_patterns['itemsets'] == itemset_key
+            if mask.any():
+                # On ne met pas à jour 'composite_score' directement car il est recalculé à chaque importance_sampling
+                # Mais on a déjà mis à jour self.pattern_scores qui est utilisé dans importance_sampling
+                pass
             
-    # TODO : faire en sorte de pouvoir faire du feedback pour les deux autres méthodes d'échantillonnage aussi
     # TwoStep Pattern Sampling (Boley et al., KDD'2011)
     def twostep_sampling(self, transactions: List[List[str]], k: int) -> List[List[str]]:
         """
         TwoStep pattern sampling: échantillonne k motifs depuis transactions.
+        Intègre le feedback utilisateur via une stratégie de Sampling Importance Resampling (SIR).
         
         Args:
             transactions: Liste de transactions (chaque transaction = liste d'items)
@@ -214,6 +257,11 @@ class PatternSampler:
             Liste de motifs échantillonnés
         """
         from decimal import Decimal
+        
+        # Stratégie SIR (Sampling Importance Resampling) pour intégrer le feedback
+        # 1. Générer un pool plus large de candidats (oversampling)
+        oversampling_factor = 10
+        pool_size = k * oversampling_factor
         
         # Étape 1: Calculer les poids cumulatifs pour chaque transaction
         weights = []
@@ -225,10 +273,11 @@ class PatternSampler:
             weights.append(cumulative_weight)
         
         Z = weights[-1] if weights else Decimal(1)
-        sampled_patterns = []
+        candidate_pool = []
+        candidate_weights = []
         
-        # Étape 2: Échantillonner k motifs
-        for _ in range(k):
+        # Étape 2: Générer le pool de candidats
+        for _ in range(pool_size):
             # Sélectionner une transaction aléatoirement (pondérée)
             rand_value = Decimal(random.random()) * Z
             
@@ -246,9 +295,33 @@ class PatternSampler:
             
             # Échantillonner un sous-ensemble de la transaction
             pattern = [item for item in selected_transaction if random.random() > 0.5]
-            sampled_patterns.append(pattern if pattern else [selected_transaction[0]] if selected_transaction else [])
+            candidate = pattern if pattern else [selected_transaction[0]] if selected_transaction else []
+            
+            candidate_pool.append(candidate)
+            
+            # Calculer le poids basé sur le feedback
+            # Score par défaut = 0.5. Si feedback positif > 0.5, négatif < 0.5
+            score = self.pattern_scores.get(frozenset(candidate), 0.5)
+            # On utilise le score comme poids (en s'assurant qu'il est positif)
+            candidate_weights.append(max(0.0, score))
+            
+        # Étape 3: Sélectionner k motifs finaux basés sur les poids (feedback)
+        total_weight = sum(candidate_weights)
+        if total_weight > 0:
+            probs = [w / total_weight for w in candidate_weights]
+        else:
+            probs = [1.0 / pool_size] * pool_size
+            
+        # Échantillonnage pondéré sans remise (si possible) ou avec remise
+        # Note: np.random.choice attend un tableau 1D pour p
+        selected_indices = np.random.choice(
+            range(pool_size), 
+            size=k, 
+            replace=True, # Avec remise car le pool peut contenir des doublons qu'on veut peut-être revoir
+            p=probs
+        )
         
-        return sampled_patterns
+        return [candidate_pool[i] for i in selected_indices]
     
     # GDPS (Generic Direct Pattern Sampling)
     def gdps_sampling(self, transactions: List[List[str]], k: int, 
@@ -256,6 +329,7 @@ class PatternSampler:
                      utility: str = "freq") -> List[List[str]]:
         """
         Generic Direct Pattern Sampling avec différentes utilités.
+        Intègre le feedback utilisateur via une stratégie de Sampling Importance Resampling (SIR).
         
         Args:
             transactions: Liste de transactions
@@ -279,6 +353,10 @@ class PatternSampler:
             elif utility_type == "decay":
                 return math.exp(-norm)
             return 1.0
+            
+        # Stratégie SIR (Sampling Importance Resampling)
+        oversampling_factor = 10
+        pool_size = k * oversampling_factor
         
         # Calculer les poids pour chaque transaction
         weights = []
@@ -299,10 +377,11 @@ class PatternSampler:
             weights.append(cumulative_weight)
         
         Z = weights[-1] if weights else Decimal(1)
-        sampled_patterns = []
+        candidate_pool = []
+        candidate_weights = []
         
-        # Échantillonner k motifs
-        for _ in range(k):
+        # Générer le pool de candidats
+        for _ in range(pool_size):
             # Sélectionner une transaction
             rand_value = Decimal(random.random()) * Z
             
@@ -320,12 +399,20 @@ class PatternSampler:
             
             # Déterminer la taille du motif selon l'utilité
             norm_probs = []
+            valid_lengths = []
             for l in range(min_norm, min(max_norm + 1, t_size + 1)):
                 from math import comb
                 n_patterns = comb(t_size, l)
                 util = compute_utility(l, utility)
                 norm_probs.append(n_patterns * util)
+                valid_lengths.append(l)
             
+            if not valid_lengths:
+                # Fallback si aucune taille valide
+                candidate_pool.append([])
+                candidate_weights.append(0.0)
+                continue
+
             # Normaliser les probabilités
             total = sum(norm_probs)
             if total > 0:
@@ -334,13 +421,28 @@ class PatternSampler:
                 norm_probs = [1.0 / len(norm_probs)] * len(norm_probs)
             
             # Choisir une taille
-            chosen_norm = np.random.choice(
-                range(min_norm, min(max_norm + 1, t_size + 1)),
-                p=norm_probs
-            )
+            chosen_norm = np.random.choice(valid_lengths, p=norm_probs)
             
             # Échantillonner un motif de cette taille
             pattern = random.sample(transaction, min(chosen_norm, len(transaction)))
-            sampled_patterns.append(pattern)
+            candidate_pool.append(pattern)
+            
+            # Calculer le poids basé sur le feedback
+            score = self.pattern_scores.get(frozenset(pattern), 0.5)
+            candidate_weights.append(max(0.0, score))
         
-        return sampled_patterns
+        # Sélectionner k motifs finaux
+        total_weight = sum(candidate_weights)
+        if total_weight > 0:
+            probs = [w / total_weight for w in candidate_weights]
+        else:
+            probs = [1.0 / pool_size] * pool_size
+            
+        selected_indices = np.random.choice(
+            range(pool_size), 
+            size=k, 
+            replace=True,
+            p=probs
+        )
+        
+        return [candidate_pool[i] for i in selected_indices]
