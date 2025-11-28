@@ -27,8 +27,6 @@ class PatternMiner:
         self.sequential = sequential
         self.frequent_itemsets = None
         self.rules = None
-        random.seed(42)
-        np.random.seed(42)
 
     def mine_patterns(self, min_support: float = 0.01, min_confidence: float = 0.5) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Extrait les motifs fréquents et les règles d'association
@@ -44,13 +42,14 @@ class PatternMiner:
         if not self.sequential:
             # Générer les itemsets fréquents
             self.frequent_itemsets = fpgrowth(self.transactions, min_support=min_support, use_colnames=True)
-
+            logger.info("Extraction des motifs fréquents avec FP-Growth")
             logger.info(f"Nombre de motifs fréquents extraits: {len(self.frequent_itemsets)}")
             logger.info(self.frequent_itemsets.head())
             self.frequent_itemsets['couverture'] = self.frequent_itemsets['support'] * transactions_len
         else:
             transactions_list = self.transactions['items'].values.tolist()
             ps = PrefixSpan(transactions_list)
+            logger.info("Extraction des motifs séquentiels avec PrefixSpan")
             freq_patterns = ps.frequent(minsup=int(min_support * len(transactions_list)))
             self.frequent_itemsets = pd.DataFrame(freq_patterns, columns=['support', 'itemsets'])
             self.frequent_itemsets['couverture'] = self.frequent_itemsets['support'].copy()
@@ -78,7 +77,7 @@ class PatternMiner:
         """
         logger.info(self.transactions.head())
         if self.transactions.empty:
-            return pd.DataFrame(columns=['itemset', 'support'])
+            return pd.DataFrame(columns=['itemsets', 'support'])
 
         # Step 1: Compute cumulative weights for transactions
         weights = []
@@ -173,9 +172,10 @@ class PatternMiner:
         """
         from decimal import Decimal
         import math
-
+        logger.info(self.transactions.head())
+        logger.info(f"Starting GDPS sampling for k={k}, min_norm={min_norm}, max_norm={max_norm}, utility={utility}")
         if self.transactions.empty:
-            return pd.DataFrame(columns=['itemset', 'support'])
+            return pd.DataFrame(columns=['itemsets', 'support'])
 
         def compute_utility(norm: int, utility_type: str) -> float:
             if utility_type == "freq":
@@ -263,7 +263,7 @@ class PatternMiner:
             support = (self.transactions[pattern].all(axis=1).sum()) / total_transactions
 
             output_data.append({
-                'itemset': pattern,
+                'itemsets': pattern,
                 'support': support
             })
 

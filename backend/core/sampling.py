@@ -17,8 +17,9 @@ class PatternSampler:
         self.patterns = patterns
         self.feedback_history = []  # Historique des feedbacks pour évaluation
         self.pattern_scores = {} # Dictionnaire persistant pour stocker les scores des motifs (frozenset -> score)
-        random.seed(42)
-        np.random.seed(42)
+        self.support_weight=0.0
+        self.surprise_weight=0.0
+        self.redundancy_weight=0.0
 
     def calculate_surprise(self, itemset: frozenset, observed_support: float) -> float:
         if not itemset:
@@ -131,7 +132,8 @@ class PatternSampler:
         
         Score = w1 * support + w2 * surprise_norm + w3 * (1 - redundancy_norm)
         """
-        self.add_surprise_and_redundancy_to_patterns()
+        if 'surprise' not in self.patterns or 'redundancy' not in self.patterns:
+            self.add_surprise_and_redundancy_to_patterns()
 
         composite_scores = (
             support_weight * np.array(self.patterns["support"].tolist())
@@ -143,8 +145,11 @@ class PatternSampler:
     def importance_sampling(self,support_weight: float, surprise_weight: float, redundancy_weight: float, k: int, replacement: bool) -> List[Tuple[FrozenSet[str], int]]:
         logger.info("Démarrage de l'échantillonnage des motifs avec importance sampling")
         logger.info(f"Support weight: {support_weight}, Surprise weight: {surprise_weight}, replacement: {replacement}")
-        if 'composite_score' not in self.patterns:
+        if 'composite_score' not in self.patterns or  self.support_weight != support_weight or self.surprise_weight != surprise_weight or self.redundancy_weight != redundancy_weight:
             self.composite_scoring(support_weight,surprise_weight,redundancy_weight)
+            self.support_weight = support_weight
+            self.surprise_weight = surprise_weight
+            self.redundancy_weight = redundancy_weight
         
         # Ensure non-negative scores
         self.patterns["composite_score"] = self.patterns["composite_score"].apply(lambda x: max(0.0, x))

@@ -367,7 +367,9 @@ async def mine_patterns(
     try: 
         frequent_itemsets, rules = pattern_miner.mine_patterns(min_support=min_support)
         
-        pattern_sampler.patterns = frequent_itemsets
+        # Initialiser le sampler avec le pool complet
+        global pattern_sampler
+        pattern_sampler = PatternSampler(frequent_itemsets)
         
         sampled_pattern=pattern_sampler.importance_sampling(
             support_weight=support_weight,
@@ -376,25 +378,38 @@ async def mine_patterns(
             k=k,
             replacement=replacement
         )
-        indexes=[i for _, i in sampled_pattern]
+        
+        # Note: pattern_sampler.patterns contient maintenant uniquement les motifs échantillonnés
+        # Mais pour construire la réponse, on a besoin des infos complètes.
+        # pattern_sampler.patterns a les colonnes support, surprise, redundancy, composite_score calculées
+        
         sampled_patterns = []
         # PatternSampler.importance_sampling returns (itemset, index)
+        # L'index retourné est relatif à pattern_sampler.patterns (qui est le subset échantillonné)
+        # OU est-ce l'index original ?
+        # Dans ma modif de sampling.py: 
+        # result = [(self.patterns.iloc[i]['itemsets'], i) for i in range(len(self.patterns))]
+        # Donc l'index est 0, 1, 2... relatif à self.patterns (le subset)
+        
         for itemset, idx in sampled_pattern:
+            # idx est l'index dans pattern_sampler.patterns
+            row = pattern_sampler.patterns.iloc[idx]
             sampled_patterns.append({
                 "index": int(idx),
                 "itemset": list(itemset),
-                "support": float(frequent_itemsets.iloc[idx]["support"]),
+                "support": float(row["support"]),
                 "length": len(itemset),
-                "surprise": float(frequent_itemsets.iloc[idx].get("surprise", 0)),
-                "redundancy": float(frequent_itemsets.iloc[idx].get("redundancy", 0)),
-                "composite_score": float(frequent_itemsets.iloc[idx].get("composite_score", 0))
+                "surprise": float(row.get("surprise", 0)),
+                "redundancy": float(row.get("redundancy", 0)),
+                "composite_score": float(row.get("composite_score", 0))
             })
+            
         return jsonable_encoder({
-            "frequent_itemsets": pattern_sampler.patterns.iloc[indexes].to_dict(orient="records"),
+            "frequent_itemsets": pattern_sampler.patterns.to_dict(orient="records"),
             "sampled_patterns": sampled_patterns,
             "message": f"Rééchantillonnage réussi: {len(sampled_pattern)} motifs échantillonnés.",
             "method": "importance_sampling",
-            "k": min(k, len(sampled_pattern)),
+            "k": len(sampled_pattern),
             "total_patterns": len(frequent_itemsets),
             "parameters": {
                 "support_weight": support_weight,
@@ -430,34 +445,39 @@ async def resample_patterns(
             k=k,
             replacement=replacement
         )
-        frequent_itemsets=pattern_sampler.patterns
-        indexes=[i for _, i in sampled_pattern]
+        
+        # pattern_sampler.patterns contient maintenant le subset échantillonné
+        
         sampled_patterns = []
         # PatternSampler.importance_sampling returns (itemset, index)
+        # L'index est relatif à pattern_sampler.patterns (le subset)
+        
         for itemset, idx in sampled_pattern:
+            row = pattern_sampler.patterns.iloc[idx]
             sampled_patterns.append({
                 "index": int(idx),
                 "itemset": list(itemset),
-                "support": float(frequent_itemsets.iloc[idx]["support"]),
+                "support": float(row["support"]),
                 "length": len(itemset),
-                "surprise": float(frequent_itemsets.iloc[idx].get("surprise", 0)),
-                "redundancy": float(frequent_itemsets.iloc[idx].get("redundancy", 0)),
-                "composite_score": float(frequent_itemsets.iloc[idx].get("composite_score", 0))
+                "surprise": float(row.get("surprise", 0)),
+                "redundancy": float(row.get("redundancy", 0)),
+                "composite_score": float(row.get("composite_score", 0))
             })
+            
         return jsonable_encoder({
-            "frequent_itemsets": pattern_sampler.patterns.iloc[indexes].to_dict(orient="records"),
+            "frequent_itemsets": pattern_sampler.patterns.to_dict(orient="records"),
             "sampled_patterns": sampled_patterns,
             "message": f"Rééchantillonnage réussi: {len(sampled_pattern)} motifs échantillonnés.",
             "method": "importance_sampling",
-            "k": min(k, len(sampled_pattern)),
-            "total_patterns": len(frequent_itemsets),
+            "k": len(sampled_pattern),
+            "total_patterns": len(pattern_sampler.patterns),
             "parameters": {
                 "support_weight": support_weight,
                 "surprise_weight": surprise_weight,
                 "redundancy_weight": redundancy_weight,
                 "replacement": replacement,
-            }}
-        )
+            }
+        })
         
     except HTTPException:
         raise
