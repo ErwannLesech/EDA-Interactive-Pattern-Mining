@@ -18,8 +18,7 @@ class PatternSampler:
         self.patterns = patterns # Motifs actuellement affichés/échantillonnés
         self.feedback_history = []  # Historique des feedbacks pour évaluation
         self.pattern_scores = {} # Dictionnaire persistant pour stocker les scores des motifs (frozenset -> score)
-        random.seed(42)
-        np.random.seed(42)
+        # Note: Seeds removed to allow proper stability evaluation with different random states
 
     def calculate_surprise(self, itemset: frozenset, observed_support: float) -> float:
         if not itemset:
